@@ -1,182 +1,183 @@
-# Deploying Stromteilung to Heroku
+# Deploying Stromteilung
 
-Two separate Heroku apps — one per container:
+We run on **two free-tier providers** that share the same git source of truth:
 
-| App slug (yours may differ) | What runs | Public URL |
+| Layer | Provider | What it gives us |
 |---|---|---|
-| `stromteilung-api` | FastAPI / uvicorn | `https://stromteilung-api-xxxx.herokuapp.com` |
-| `stromteilung-web` | Nginx serving the Vite bundle | `https://stromteilung-web-xxxx.herokuapp.com` |
+| Frontend (Vite SPA) | **Vercel** (Hobby) | global CDN, instant first paint, automatic preview deploys |
+| Backend (FastAPI) | **Render** (Free) | long-running container, release-phase migrations, generous logs |
+| Database | **Aiven Postgres** (existing) | PostGIS, daily backups, EU region |
 
-The database stays on **Aiven Postgres** (already set up); we do not provision
-Heroku Postgres.
-
----
-
-## Prerequisites
-
-```bash
-# Heroku CLI (one-time)
-brew tap heroku/brew && brew install heroku
-
-# Login (opens a browser tab)
-heroku login
-heroku container:login   # auth Docker to Heroku's registry
-```
-
-Verify Docker can build locally first — saves cycles vs. discovering an error
-inside Heroku's builder:
-
-```bash
-# From repo root
-docker build -t stromteilung-web --build-arg VITE_API_URL=http://localhost:8000/api/v1 .
-
-# From backend dir
-cd backend && docker build -t stromteilung-api .
-```
+Both providers deploy from GitHub on every push to `main`. No CLI tools needed
+locally — once connected, ship by pushing.
 
 ---
 
-## One-time app setup
+## One-time setup (~10 minutes)
 
-> Heroku slugs must be globally unique. Pick something like
-> `stromteilung-api-<your-handle>` if `stromteilung-api` is taken.
+### 1. Push the repo to GitHub
 
-```bash
-# Backend
-heroku create stromteilung-api --stack container
+The initial commit already exists locally. We need to create the remote
+repo and push.
 
-# Frontend
-heroku create stromteilung-web --stack container
-
-# Capture the assigned URLs — we'll plug them into each other's config.
-API_URL=$(heroku info -a stromteilung-api  --json | python3 -c "import sys,json;print(json.load(sys.stdin)['app']['web_url'].rstrip('/'))")
-WEB_URL=$(heroku info -a stromteilung-web --json | python3 -c "import sys,json;print(json.load(sys.stdin)['app']['web_url'].rstrip('/'))")
-
-echo "API: $API_URL"
-echo "WEB: $WEB_URL"
-```
-
-### Backend config
+**Option A — `gh` CLI (recommended, single command):**
 
 ```bash
-heroku config:set -a stromteilung-api \
-  APP_ENV=production \
-  APP_DEBUG=false \
-  APP_SECRET_KEY="$(openssl rand -hex 32)" \
-  APP_CORS_ORIGINS="$WEB_URL" \
-  DATABASE_URL='postgresql+asyncpg://avnadmin:<aiven-password>@<aiven-host>:14569/defaultdb' \
-  DATABASE_SSL=require \
-  LOG_LEVEL=INFO \
-  LOG_JSON=true
+brew install gh
+gh auth login                    # GitHub OAuth flow
+gh repo create stromteilung --private --source=. --push
 ```
 
-> **Rotate the Aiven password** in the Aiven console first; paste the new one
-> into `DATABASE_URL` above. The previous one was visible in chat.
+**Option B — manual:**
 
-### Frontend has no runtime config
+1. Open https://github.com/new → name `stromteilung`, **Private**, no README/license.
+2. Back in this terminal:
+   ```bash
+   git remote add origin https://github.com/<your-user>/stromteilung.git
+   git branch -M main
+   git push -u origin main
+   ```
 
-Vite inlines `VITE_API_URL` at build time, so the frontend container is
-configuration-free. The URL lives in the build arg below.
+Verify:
+
+```bash
+git remote -v
+# origin  https://github.com/<your-user>/stromteilung.git (fetch)
+# origin  https://github.com/<your-user>/stromteilung.git (push)
+```
+
+### 2. Deploy the backend on Render
+
+1. Sign up at https://render.com (free, no card required).
+2. **New → Blueprint** → connect GitHub → pick the `stromteilung` repo.
+3. Render parses `backend/render.yaml` and proposes one service:
+   `stromteilung-api`. Click **Apply**.
+4. While it builds the first time (~3 min), set the two secret env vars
+   it left blank (Render UI → service → *Environment*):
+
+   | Key | Value |
+   |---|---|
+   | `DATABASE_URL` | `postgresql+asyncpg://avnadmin:<aiven-pwd>@pg-1bff1652-khizrumahmed-6b58.f.aivencloud.com:14569/defaultdb` |
+   | `APP_CORS_ORIGINS` | *(leave blank for now; we'll fill it once the Vercel URL exists)* |
+
+5. Wait for the deploy to finish. Render runs `alembic upgrade head` as the
+   pre-deploy step, so the schema is in place automatically.
+
+6. Capture the live URL (top of the service page), e.g.
+   `https://stromteilung-api.onrender.com`. Save it — we need it for the
+   frontend env var.
+
+7. Smoke test:
+   ```bash
+   curl https://stromteilung-api.onrender.com/health
+   # → {"status":"ok"}
+   curl https://stromteilung-api.onrender.com/ready
+   # → {"status":"ready"}
+   ```
+
+### 3. Deploy the frontend on Vercel
+
+1. Sign up at https://vercel.com (free, no card; "Continue with GitHub").
+2. **Add New… → Project** → import the `stromteilung` repo.
+3. Vercel auto-detects Vite from `vercel.json` + `package.json`. Don't touch
+   the build settings.
+4. Under **Environment Variables**, add:
+
+   | Name | Value | Environment |
+   |---|---|---|
+   | `VITE_API_URL` | `https://stromteilung-api.onrender.com/api/v1` | Production, Preview, Development |
+
+   (Substitute the live Render URL captured in step 2.6.)
+
+5. Click **Deploy**. First build takes ~90 s.
+
+6. Capture the production URL (e.g. `https://stromteilung.vercel.app`).
+
+### 4. Close the CORS loop
+
+Back on Render → `stromteilung-api` → *Environment*:
+
+| Key | Value |
+|---|---|
+| `APP_CORS_ORIGINS` | `https://stromteilung.vercel.app` (the Vercel URL from step 3.6) |
+
+Save → Render restarts the service automatically (~30 s).
+
+### 5. Seed demo data (one-off, optional)
+
+In the Render dashboard for `stromteilung-api` → **Shell** tab:
+
+```bash
+python -m app.db.seed
+```
+
+### 6. Full smoke test
+
+```bash
+# Auth round-trip
+curl -X POST https://stromteilung-api.onrender.com/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"anon-buyer-00@stromteilung.de","password":"demo-pass-12345"}'
+# → { "user": ..., "tokens": ... }
+
+# Open the frontend
+open https://stromteilung.vercel.app
+```
+
+Log in with the seeded credentials above; the buyer dashboard should
+populate from the live Render backend within ~500 ms (after the cold start).
 
 ---
 
-## Deploy the backend
+## Ongoing deploys
 
 ```bash
-cd backend
-
-# Build + push the image to Heroku's container registry, then release it.
-heroku container:push web -a stromteilung-api
-heroku container:release web -a stromteilung-api
-
-# Run the initial migration (and every subsequent one). For repeat deploys,
-# automate by switching to a heroku.yml-based deploy (see `heroku.yml`),
-# which runs `alembic upgrade head` in the release phase automatically.
-heroku run alembic upgrade head -a stromteilung-api
-
-# Seed the demo data (one-off; skip for prod):
-heroku run python -m app.db.seed -a stromteilung-api
-
-# Tail logs while you smoke-test:
-heroku logs --tail -a stromteilung-api &
-
-# Verify
-curl -i "$API_URL/health"
-curl -i "$API_URL/ready"
-curl -i "$API_URL/docs"          # Swagger UI
+git push origin main
 ```
 
-## Deploy the frontend
+That's it. Both Vercel and Render watch the `main` branch and deploy on every
+push. **Backend deploys automatically run `alembic upgrade head`** before
+flipping traffic, so migrations don't need a separate command.
 
-```bash
-cd ..   # back to repo root
-
-# Build with the live API URL baked in.
-docker build \
-  --platform=linux/amd64 \
-  --build-arg VITE_API_URL="$API_URL/api/v1" \
-  -t registry.heroku.com/stromteilung-web/web \
-  .
-
-docker push registry.heroku.com/stromteilung-web/web
-heroku container:release web -a stromteilung-web
-
-# Verify
-curl -i "$WEB_URL"
-open "$WEB_URL"
-```
-
-> The `--platform=linux/amd64` flag matters on Apple Silicon — Heroku dynos
-> are x86_64. Without it the push succeeds but the container won't boot.
-
----
-
-## Subsequent deploys
-
-```bash
-# Backend
-(cd backend && heroku container:push web -a stromteilung-api \
-            && heroku container:release web -a stromteilung-api \
-            && heroku run alembic upgrade head -a stromteilung-api)
-
-# Frontend
-docker build --platform=linux/amd64 \
-  --build-arg VITE_API_URL="https://stromteilung-api.herokuapp.com/api/v1" \
-  -t registry.heroku.com/stromteilung-web/web . \
-  && docker push registry.heroku.com/stromteilung-web/web \
-  && heroku container:release web -a stromteilung-web
-```
-
-A two-line shell function makes this nicer:
-
-```bash
-deploy:api()  { (cd backend && heroku container:push web -a stromteilung-api && heroku container:release web -a stromteilung-api && heroku run alembic upgrade head -a stromteilung-api); }
-deploy:web()  { docker build --platform=linux/amd64 --build-arg VITE_API_URL="https://stromteilung-api.herokuapp.com/api/v1" -t registry.heroku.com/stromteilung-web/web . && docker push registry.heroku.com/stromteilung-web/web && heroku container:release web -a stromteilung-web; }
-```
+Preview deploys: every PR opened on GitHub gets a Vercel preview URL — useful
+for sharing in-progress UI changes without touching production.
 
 ---
 
 ## Operational basics
 
-```bash
-# Stream live logs
-heroku logs --tail -a stromteilung-api
-heroku logs --tail -a stromteilung-web
+### Logs
 
-# One-off shell on a fresh dyno
-heroku run bash -a stromteilung-api
+- **Vercel** → project → *Deployments → <latest> → Logs* (or `vercel logs` if you install the CLI later).
+- **Render** → service → *Logs* tab (live stream).
 
-# Restart all dynos (rolls one at a time)
-heroku ps:restart -a stromteilung-api
+### Rolling back
 
-# Scale up / down. Eco is $5/mo per dyno; Basic is $7. Both sleep when idle on Eco.
-heroku ps:scale web=1:Basic -a stromteilung-api
-heroku ps:scale web=1:Basic -a stromteilung-web
+- **Vercel** → *Deployments* → previous deploy → **Promote to Production**.
+- **Render** → service → **Manual Deploy → Deploy specific commit**, pick the prior SHA.
 
-# Roll back to the previous release if a deploy goes sideways
-heroku releases -a stromteilung-api
-heroku rollback v<n> -a stromteilung-api
+### Scaling up beyond free tiers
+
+| Symptom | Fix | Cost |
+|---|---|---|
+| Backend cold-start hurts UX (~30 s wake from idle) | Render → **Settings → Instance Type → Starter** | $7/mo (no sleep) |
+| Frontend traffic surges | Vercel Hobby covers 100 GB/mo bandwidth; **Pro** if you outgrow | $20/mo |
+| DB hot | Aiven plan upgrade | varies |
+
+---
+
+## Files in this repo that drive the deploys
+
 ```
+backend/render.yaml      ← Render Blueprint: service config, env vars, preDeployCommand
+backend/Dockerfile       ← used by Render (`runtime: docker`)
+backend/.dockerignore
+vercel.json              ← Vercel project config: framework, SPA rewrites, cache + security headers
+```
+
+The Heroku-specific files (`heroku.yml`, `nginx.conf.template`,
+`nginx-entrypoint.sh`) are kept in the repo — harmless, and they let us
+swap deploy targets later without rebuilding from scratch.
 
 ---
 
@@ -184,28 +185,16 @@ heroku rollback v<n> -a stromteilung-api
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `H10 App crashed` immediately after release | Container exited fast — usually wrong `$PORT` binding | Confirm uvicorn/nginx is reading `$PORT`; check `heroku logs --tail` |
-| `exec format error` in logs | Pushed an arm64 image to an amd64 dyno (Apple Silicon trap) | Re-build with `--platform=linux/amd64` |
-| Login works locally, fails on Heroku | `APP_CORS_ORIGINS` doesn't include the live frontend URL | `heroku config:set APP_CORS_ORIGINS="$WEB_URL" -a stromteilung-api` |
-| `ProgrammingError: relation "users" does not exist` | Forgot to run migrations | `heroku run alembic upgrade head -a stromteilung-api` |
-| `pg_hba.conf` / SSL errors against Aiven | `DATABASE_SSL` env var missing | `heroku config:set DATABASE_SSL=require -a stromteilung-api` |
-| Frontend boot loop with `nginx: [emerg] ... is duplicate` | Old `/etc/nginx/conf.d/default.conf` left in the image | We delete it in the Dockerfile; confirm you're not running a stale local image |
-| 404s on direct hits to e.g. `/buyer-dash` | SPA fallback missing | Already in `nginx.conf.template` via `try_files $uri /index.html` |
+| Frontend loads but every API call returns CORS error | `APP_CORS_ORIGINS` doesn't match the exact Vercel URL (with `https://`, no trailing `/`) | Update on Render, save, wait ~30 s for restart |
+| Backend deploy hangs at `alembic upgrade head` | DATABASE_URL is wrong or Aiven is rejecting | Render shell → `alembic current`; check Aiven console |
+| First backend request after idle takes 30 s | Free-tier cold start | Bump to Starter ($7/mo) or accept the wait |
+| `relation "users" does not exist` | Migration didn't run / wrong DB | Render shell → `alembic upgrade head` manually |
+| Vercel build fails on `npm ci` | Stale `package-lock.json` | `npm install && git commit` |
+| Frontend shows `Failed to fetch` | `VITE_API_URL` baked at build time was wrong | Vercel → env vars → fix → **Redeploy** (build args only refresh on rebuild) |
 
 ---
 
-## What the files do
+## Reminders
 
-```
-backend/
-├── Dockerfile          ← multi-stage; uv install → slim runtime + tini
-├── .dockerignore       ← keeps build context lean
-└── heroku.yml          ← declarative deploy contract (if you switch to git push)
-
-frontend (repo root)/
-├── Dockerfile          ← multi-stage Node build → Nginx serve
-├── .dockerignore
-├── nginx.conf.template ← gzip, SPA fallback, immutable asset cache, security headers
-├── nginx-entrypoint.sh ← envsubst only $PORT so $uri etc. survive
-└── heroku.yml          ← reference (we use container:push for build-arg flexibility)
-```
+- 🔑 **Rotate the Aiven DB password** in the Aiven console — the previous one was visible in chat history. After rotating, paste the new connection string into Render's `DATABASE_URL`.
+- 🔑 **`APP_SECRET_KEY` is auto-generated by Render** (`generateValue: true` in `render.yaml`). Treat it like any other production secret.

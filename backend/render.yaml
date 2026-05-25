@@ -1,0 +1,78 @@
+# Render Blueprint — declarative spec for the Stromteilung backend.
+#
+# When you connect this repo to Render and apply the Blueprint, Render reads
+# this file and provisions the service, env vars and pre-deploy hook in one
+# shot. Every subsequent `git push` triggers a rebuild + redeploy.
+#
+# Free tier behaviour:
+#   - Web service sleeps after ~15 min of inactivity; cold-start ~30 s
+#   - Suitable for staging / MVP; bump to Starter ($7/mo) for production
+#
+# The Aiven Postgres instance is external — we never provision a DB on Render.
+
+services:
+  - type: web
+    name: stromteilung-api
+    runtime: docker
+    # Repo root is the monorepo; the backend lives in /backend.
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # Pick a region close to Aiven for low DB round-trip. Frankfurt is the
+    # EU-Central option that pairs naturally with a German marketplace.
+    region: frankfurt
+
+    # Render polls this endpoint after a deploy and only promotes the new
+    # revision if it returns 2xx. Maps directly to our FastAPI /health route.
+    healthCheckPath: /health
+
+    # Auto-deploy on every push to the connected branch.
+    autoDeploy: true
+
+    # Runs after the build, before traffic flips to the new instance.
+    # Failing here aborts the deploy — exactly what we want for migrations.
+    preDeployCommand: alembic upgrade head
+
+    envVars:
+      # --- App ---------------------------------------------------------
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_NAME
+        value: stromteilung-backend
+      # Render generates a random value once and persists it. Rotating
+      # invalidates all access tokens (refresh tokens are DB-backed, fine).
+      - key: APP_SECRET_KEY
+        generateValue: true
+      # `sync: false` keeps the key out of the Blueprint and forces you to
+      # paste the live Vercel URL via the Render dashboard after the
+      # frontend project exists.
+      - key: APP_CORS_ORIGINS
+        sync: false
+
+      # --- Database (external, Aiven) ----------------------------------
+      # DATABASE_URL holds the Aiven Postgres password — keep it out of the
+      # Blueprint, paste it via the Render dashboard once.
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: require
+      - key: DATABASE_POOL_SIZE
+        value: "10"
+      - key: DATABASE_MAX_OVERFLOW
+        value: "5"
+
+      # --- Auth (JWT) --------------------------------------------------
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_ACCESS_TTL_SECONDS
+        value: "900"
+      - key: JWT_REFRESH_TTL_SECONDS
+        value: "2592000"
+
+      # --- Logging -----------------------------------------------------
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_JSON
+        value: "true"
