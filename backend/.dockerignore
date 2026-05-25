@@ -1,0 +1,46 @@
+# Keep the build context tiny — anything not needed inside the container
+# stays out. Smaller context = faster uploads to Heroku's builder.
+
+# Python build artefacts
+__pycache__
+*.py[cod]
+*.egg-info
+*.egg
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Virtual envs (we rebuild inside the container)
+.venv
+venv
+.python-version
+
+# Secrets & local config — never bake into an image
+.env
+.env.*
+!.env.example
+
+# VCS / editor / OS noise
+.git
+.gitignore
+.gitattributes
+.github
+.idea
+.vscode
+.DS_Store
+
+# Tests + docs aren't needed at runtime
+tests
+*.md
+!alembic.ini
+
+# Frontend (sibling tree) and node deps just in case
+../src
+../node_modules
+node_modules
+
+# Build outputs
+dist
+build

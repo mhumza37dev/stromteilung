@@ -1,0 +1,25 @@
+# heroku.yml — declarative deploy contract for the backend.
+#
+# Heroku reads this at build time when the app's stack is `container`.
+# Three phases land per deploy:
+#
+#   build   → build the Dockerfile (web process)
+#   release → run alembic migrations against the live DB before flipping traffic
+#   run     → the actual web command; uvicorn picks up $PORT from the dyno env
+#
+# Note: this file is honoured when deploying via `git push heroku` against a
+# container-stack app. If you deploy via `heroku container:push` instead, the
+# release-phase command must be set separately (`heroku run alembic upgrade head`
+# from CI, or via a release Procfile inside the image — we don't ship one).
+
+build:
+  docker:
+    web: Dockerfile
+
+release:
+  image: web
+  command:
+    - alembic upgrade head
+
+run:
+  web: sh -c "exec uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2 --proxy-headers --forwarded-allow-ips='*'"

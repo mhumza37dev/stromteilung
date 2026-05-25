@@ -1,0 +1,18 @@
+# heroku.yml — declarative deploy contract for the frontend.
+#
+# Kept as a reference for `git push heroku` flows. We actually prefer
+# `heroku container:push` for this app (see DEPLOY.md) because Vite needs
+# `VITE_API_URL` baked in at build time and `container:push --arg` is the
+# cleanest way to pass it.
+#
+# If you switch to git-push-based deploys, fill in `build.config.VITE_API_URL`
+# with the live backend URL — Heroku will pass it through as `--build-arg`.
+
+build:
+  docker:
+    web: Dockerfile
+  # config:
+  #   VITE_API_URL: https://stromteilung-api.herokuapp.com/api/v1
+
+run:
+  web: nginx -g 'daemon off;'

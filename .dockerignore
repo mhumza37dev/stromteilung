@@ -1,0 +1,35 @@
+# Keep the upload to Heroku's builder tight — only what `npm run build` needs.
+
+# Build output (we re-generate inside the container)
+dist
+build
+
+# Node deps (`npm ci` reinstalls from the lockfile)
+node_modules
+npm-debug.log
+yarn-error.log
+.npm
+
+# Secrets & local config
+.env
+.env.*
+!.env.example
+!.env.production
+
+# VCS / editor / OS noise
+.git
+.gitignore
+.gitattributes
+.github
+.idea
+.vscode
+.DS_Store
+
+# Docs + tests (we don't ship those to the browser)
+README.md
+DEPLOY.md
+*.md
+
+# Backend lives next to the frontend in the monorepo — keep it out of the
+# *frontend* build context.
+backend

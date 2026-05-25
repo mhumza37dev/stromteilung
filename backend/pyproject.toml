@@ -1,0 +1,30 @@
+[project]
+name = "stromteilung-backend"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.14",
+    "argon2-cffi>=23.1",
+    "asyncpg>=0.30",
+    "email-validator>=2.2",
+    "fastapi[standard]>=0.115",
+    "geoalchemy2>=0.15",
+    "passlib[argon2]>=1.7.4",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "python-jose[cryptography]>=3.3",
+    "python-multipart>=0.0.20",
+    "sqlalchemy[asyncio]>=2.0",
+    "structlog>=24.4",
+    "uvicorn[standard]>=0.32",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
