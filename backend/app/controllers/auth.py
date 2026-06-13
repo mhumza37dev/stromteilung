@@ -63,6 +63,7 @@ async def login(
     return await auth.login(
         email=body.email,
         password=body.password,
+        role=body.role,
         user_agent=user_agent,
         ip=ip,
     )

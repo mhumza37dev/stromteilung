@@ -10,7 +10,8 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, func, text
+from geoalchemy2 import Geography
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Numeric, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -49,9 +50,30 @@ class Listing(Base):
     # Monthly supply ceiling.
     capacity_kwh: Mapped[int] = mapped_column(Integer, nullable=False)
 
+    # Optional per-listing overrides. When null, the listing inherits these
+    # from the seller's profile. Sellers who supply multiple buildings /
+    # transformers from a single account can pin each listing precisely.
+    address_text: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    geo: Mapped[object | None] = mapped_column(
+        Geography(geometry_type="POINT", srid=4326), nullable=True
+    )
+    transformer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("transformers.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Paused listings stay in the DB (analytics + un-pause) but don't surface
     # to buyers.
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Soft delete. Distinct from `active` (a reversible pause): once set, the
+    # listing is gone for good from the seller's dashboard and buyer search,
+    # but the row is retained for analytics / audit. NULL = live.
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

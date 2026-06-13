@@ -59,6 +59,10 @@ export interface UserProfile {
   email?: string;
   whatsapp?: string;
   address?: string;
+  /** Latitude resolved by the map picker (Nominatim or browser geolocation). */
+  lat?: number | null;
+  /** Longitude resolved by the map picker. */
+  lng?: number | null;
   transformer?: string;
   /** Buyers: monthly demand in kWh (as string for input parity). */
   requirement?: string;

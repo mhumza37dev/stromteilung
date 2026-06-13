@@ -11,7 +11,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, String, func, text
+from sqlalchemy import Boolean, DateTime, Enum, String, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,13 +34,18 @@ class User(Base):
     """A marketplace participant — buyer, seller or admin."""
 
     __tablename__ = "users"
+    # Email is unique per role rather than globally — same person can have
+    # both a buyer and a seller account at the same address.
+    __table_args__ = (
+        UniqueConstraint("email", "role", name="uq_users_email_role"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         server_default=text("gen_random_uuid()"),
     )
-    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[UserRole] = mapped_column(
         Enum(

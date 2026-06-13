@@ -11,9 +11,12 @@
  * a single-file change.
  */
 
+import type { UserPublic } from './api-types';
+
 const ACCESS_KEY = 'stromteilung.access_token';
 const REFRESH_KEY = 'stromteilung.refresh_token';
 const EXPIRES_AT_KEY = 'stromteilung.access_expires_at';
+const USER_KEY = 'stromteilung.user';
 
 export interface StoredTokens {
   accessToken: string;
@@ -58,4 +61,28 @@ export function clearTokens(): void {
   localStorage.removeItem(ACCESS_KEY);
   localStorage.removeItem(REFRESH_KEY);
   localStorage.removeItem(EXPIRES_AT_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+/**
+ * Persist the signed-in user alongside the tokens. Lets the app render the
+ * authenticated UI on the very first paint after a reload (then revalidate
+ * `/users/me` in the background) instead of showing a blank "booting" screen
+ * while that round-trip completes.
+ */
+export function saveUser(user: UserPublic): void {
+  try {
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+  } catch {
+    // Best-effort — a missing cached user just means we boot via the network.
+  }
+}
+
+export function loadUser(): UserPublic | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    return raw ? (JSON.parse(raw) as UserPublic) : null;
+  } catch {
+    return null;
+  }
 }

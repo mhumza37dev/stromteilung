@@ -24,24 +24,40 @@ import type { AuthMode, Screen } from './types';
  * skeleton so the transition feels like "the page is filling in" instead of
  * a layout shift.
  */
-const Auth = lazy(() =>
-  import('./screens/Auth').then((m) => ({ default: m.Auth })),
-);
+// Import thunks kept as named references so we can both lazy-mount *and*
+// prefetch (warm the chunk before navigation) without duplicating the path.
+const importAuth = () => import('./screens/Auth');
+const importOnboarding = () => import('./screens/Onboarding');
+const importBuyerDash = () => import('./screens/BuyerDash');
+const importSellerDash = () => import('./screens/SellerDash');
+const importProfilePage = () => import('./screens/ProfilePage');
+const importRatingsPage = () => import('./screens/RatingsPage');
+
+const Auth = lazy(() => importAuth().then((m) => ({ default: m.Auth })));
 const Onboarding = lazy(() =>
-  import('./screens/Onboarding').then((m) => ({ default: m.Onboarding })),
+  importOnboarding().then((m) => ({ default: m.Onboarding })),
 );
 const BuyerDash = lazy(() =>
-  import('./screens/BuyerDash').then((m) => ({ default: m.BuyerDash })),
+  importBuyerDash().then((m) => ({ default: m.BuyerDash })),
 );
 const SellerDash = lazy(() =>
-  import('./screens/SellerDash').then((m) => ({ default: m.SellerDash })),
+  importSellerDash().then((m) => ({ default: m.SellerDash })),
 );
 const ProfilePage = lazy(() =>
-  import('./screens/ProfilePage').then((m) => ({ default: m.ProfilePage })),
+  importProfilePage().then((m) => ({ default: m.ProfilePage })),
 );
 const RatingsPage = lazy(() =>
-  import('./screens/RatingsPage').then((m) => ({ default: m.RatingsPage })),
+  importRatingsPage().then((m) => ({ default: m.RatingsPage })),
 );
+
+/**
+ * Warm the chunks the user is about to need. Fire-and-forget: a failed
+ * prefetch is harmless — the real lazy mount retries the import and its
+ * Suspense fallback covers the wait.
+ */
+function prefetch(...thunks: Array<() => Promise<unknown>>) {
+  for (const load of thunks) load().catch(() => {});
+}
 
 
 /**
@@ -74,7 +90,7 @@ export default function App() {
  * (logout) we reset to landing.
  */
 function AppRouter() {
-  const { user, status, logout } = useAuth();
+  const { user, status, logout, deleteAccount } = useAuth();
 
   const [history, setHistory] = useState<Screen[]>(['landing']);
   const [authMode, setAuthMode] = useState<AuthMode>('register');
@@ -118,11 +134,31 @@ function AppRouter() {
     });
   }, [status, user, justRegistered]);
 
+  // Prefetch the next screens' chunks based on where the user is, so the
+  // post-login / post-navigation transition swaps in instantly instead of
+  // showing a lazy-load Suspense skeleton:
+  //  - on landing → warm the Auth chunk (the obvious next click)
+  //  - on auth    → warm onboarding + both dashboards (login resolves to one)
+  useEffect(() => {
+    if (screen === 'landing') prefetch(importAuth);
+    else if (screen === 'auth') {
+      prefetch(importOnboarding, importBuyerDash, importSellerDash);
+    }
+  }, [screen]);
+
   // Wrapper for logout that also clears local stack state.
   const handleLogout = useCallback(async () => {
     await logout();
     resetToLanding();
   }, [logout, resetToLanding]);
+
+  // Account deletion: soft-delete server-side, then drop the session and
+  // return to landing. Rethrows on failure so the modal keeps itself open and
+  // shows the error instead of navigating away from a still-live account.
+  const handleDeleteAccount = useCallback(async () => {
+    await deleteAccount();
+    resetToLanding();
+  }, [deleteAccount, resetToLanding]);
 
   const onStartFromLanding = useCallback(
     (_mode: unknown, intent?: AuthMode) => {
@@ -203,7 +239,7 @@ function AppRouter() {
             role={user.role}
             onBack={goBack}
             onLogout={handleLogout}
-            onDeleteProfile={handleLogout}
+            onDeleteProfile={handleDeleteAccount}
           />
         </Suspense>
       )}

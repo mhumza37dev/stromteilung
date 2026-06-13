@@ -12,7 +12,9 @@ import { api, ApiError, refreshTokens, setAuthState } from '../lib/api';
 import {
   clearTokens,
   loadTokens,
+  loadUser,
   saveTokens,
+  saveUser,
 } from '../lib/auth-storage';
 import type {
   AuthResponse,
@@ -42,6 +44,8 @@ export interface AuthContextValue {
   login: (body: LoginBody) => Promise<UserPublic>;
   register: (body: RegisterBody) => Promise<UserPublic>;
   logout: () => Promise<void>;
+  /** GDPR account deletion — soft-deletes server-side, then clears the session. */
+  deleteAccount: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextValue>({
@@ -50,6 +54,7 @@ export const AuthContext = createContext<AuthContextValue>({
   login: async () => { throw new Error('AuthProvider missing'); },
   register: async () => { throw new Error('AuthProvider missing'); },
   logout: async () => { throw new Error('AuthProvider missing'); },
+  deleteAccount: async () => { throw new Error('AuthProvider missing'); },
 });
 
 interface AuthProviderProps {
@@ -60,8 +65,14 @@ interface AuthProviderProps {
 const REFRESH_LEEWAY_MS = 60_000;
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [user, setUser] = useState<UserPublic | null>(null);
-  const [status, setStatus] = useState<AuthStatus>('booting');
+  // Seed straight from storage so a returning user renders the authenticated
+  // UI on the first paint — no blank "booting" frame. The bootstrap effect
+  // below still revalidates the session against the backend and downgrades to
+  // anonymous if the stored token turns out to be invalid.
+  const [user, setUser] = useState<UserPublic | null>(() => loadUser());
+  const [status, setStatus] = useState<AuthStatus>(() =>
+    loadTokens() && loadUser() ? 'authenticated' : 'booting',
+  );
   const queryClient = useQueryClient();
 
   // Timer handle so we don't double-schedule refreshes on token rotation.
@@ -93,6 +104,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     (auth: AuthResponse) => {
       const stored = saveTokens(auth.tokens);
       setAuthState(stored);
+      saveUser(auth.user);
       setUser(auth.user);
       setStatus('authenticated');
       scheduleProactiveRefresh(stored.expiresAt);
@@ -118,6 +130,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       try {
         const me = await api.get<UserPublic>('/users/me');
         if (cancelled) return;
+        saveUser(me);
         setUser(me);
         setStatus('authenticated');
         scheduleProactiveRefresh(stored.expiresAt);
@@ -170,14 +183,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
     [adopt],
   );
 
-  const logout = useCallback(async () => {
-    const stored = loadTokens();
-    if (stored) {
-      // Best-effort revoke server-side; don't block the UI on it.
-      api
-        .post('/auth/logout', { refresh_token: stored.refreshToken })
-        .catch(() => {});
-    }
+  // Tear down all local session state. Shared by logout and account deletion
+  // so both converge to the exact same signed-out condition.
+  const clearSession = useCallback(() => {
     if (refreshTimer.current !== null) {
       window.clearTimeout(refreshTimer.current);
       refreshTimer.current = null;
@@ -190,9 +198,30 @@ export function AuthProvider({ children }: AuthProviderProps) {
     queryClient.clear();
   }, [queryClient]);
 
+  const logout = useCallback(async () => {
+    const stored = loadTokens();
+    if (stored) {
+      // Best-effort revoke server-side; don't block the UI on it.
+      api
+        .post('/auth/logout', { refresh_token: stored.refreshToken })
+        .catch(() => {});
+    }
+    clearSession();
+  }, [clearSession]);
+
+  const deleteAccount = useCallback(async () => {
+    // Await this one (unlike logout's fire-and-forget) so the account is
+    // actually soft-deleted server-side before we drop the session — otherwise
+    // we'd report success on a no-op. If it fails, we rethrow and leave the
+    // session intact so the UI can surface the error rather than silently
+    // signing the user out of a still-live account.
+    await api.delete('/users/me');
+    clearSession();
+  }, [clearSession]);
+
   const value = useMemo(
-    () => ({ user, status, login, register, logout }),
-    [user, status, login, register, logout],
+    () => ({ user, status, login, register, logout, deleteAccount }),
+    [user, status, login, register, logout, deleteAccount],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

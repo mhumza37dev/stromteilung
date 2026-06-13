@@ -1,73 +1,156 @@
-# React + TypeScript + Vite
+# Stromteilung
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Local green-energy marketplace — buyers and sellers trade electricity within a
+500 m radius of their grid transformer. React + TypeScript + Vite frontend,
+FastAPI + PostgreSQL/PostGIS backend.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| Layer    | Tech                                                        |
+| -------- | ----------------------------------------------------------- |
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS, TanStack Query, MapLibre GL |
+| Backend  | FastAPI, SQLAlchemy (async), Alembic, asyncpg               |
+| Database | PostgreSQL with the PostGIS extension                       |
+| Maps     | MapLibre GL + OpenStreetMap tiles & Nominatim (no API key)  |
 
-## React Compiler
+## Prerequisites
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Node.js** ≥ 20 and npm
+- **Python** ≥ 3.12
+- **PostgreSQL** ≥ 14 with the **PostGIS** extension
+- **[uv](https://docs.astral.sh/uv/)** for Python dependency management
+  (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
-## Expanding the ESLint configuration
+---
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Backend setup
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+All backend commands run from the `backend/` directory.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd backend
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 1. Install dependencies
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+uv sync                 # creates .venv and installs runtime + dev deps
 ```
+
+### 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and set at minimum:
+
+- `DATABASE_URL` — e.g. `postgresql+asyncpg://postgres:postgres@localhost:5432/stromteilung`
+- `APP_SECRET_KEY` — generate one with `openssl rand -hex 32`
+- `DATABASE_SSL=disable` — for local Postgres
+
+### 3. Create the database (with PostGIS)
+
+```bash
+createdb stromteilung
+psql -d stromteilung -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+```
+
+### 4. Run migrations
+
+```bash
+uv run alembic upgrade head
+```
+
+### 5. (Optional) Seed demo data
+
+```bash
+uv run python -m app.db.seed
+```
+
+Seeded accounts use the email pattern `<name>@stromteilung.de` with the shared
+password `demo-pass-12345`.
+
+### 6. Run the backend
+
+```bash
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+The API is served under `http://localhost:8000/api/v1`.
+Interactive docs: `http://localhost:8000/docs`.
+
+---
+
+## Frontend setup
+
+All frontend commands run from the repository root.
+
+### 1. Install dependencies
+
+```bash
+npm install
+```
+
+### 2. Configure environment
+
+The root `.env` already points the frontend at the local backend:
+
+```
+VITE_API_URL=http://localhost:8000/api/v1
+```
+
+Adjust this if your backend runs elsewhere.
+
+### 3. Run the dev server
+
+```bash
+npm run dev
+```
+
+The app is served at `http://localhost:5173` with hot module reload.
+
+---
+
+## Running the full stack
+
+Open two terminals:
+
+```bash
+# Terminal 1 — backend
+cd backend
+uv run uvicorn app.main:app --reload --port 8000
+
+# Terminal 2 — frontend
+npm run dev
+```
+
+Then visit **http://localhost:5173**.
+
+---
+
+## Useful commands
+
+### Frontend (repo root)
+
+| Command             | Description                                  |
+| ------------------- | -------------------------------------------- |
+| `npm run dev`       | Start the Vite dev server (HMR)              |
+| `npm run typecheck` | Type-check without emitting (`tsc -b`)       |
+| `npm run lint`      | Run ESLint                                   |
+| `npm run build`     | Production build to `dist/`                  |
+| `npm run build:check` | Type-check then build                      |
+| `npm run preview`   | Preview the production build locally         |
+
+### Backend (`backend/`)
+
+| Command                                       | Description                       |
+| --------------------------------------------- | --------------------------------- |
+| `uv run uvicorn app.main:app --reload`        | Start the API with auto-reload    |
+| `uv run alembic upgrade head`                 | Apply all migrations              |
+| `uv run alembic revision --autogenerate -m …` | Generate a new migration          |
+| `uv run alembic downgrade -1`                 | Roll back the last migration      |
+| `uv run python -m app.db.seed`                | Seed demo data                    |
+| `uv run pytest`                               | Run the test suite                |
+| `uv run ruff check .`                         | Lint the Python code              |
+| `uv run mypy app`                             | Type-check the Python code        |

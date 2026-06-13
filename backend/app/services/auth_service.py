@@ -20,7 +20,7 @@ from app.core import security
 from app.core.config import settings
 from app.core.exceptions import ConflictError, UnauthorizedError
 from app.models.refresh_token import RefreshToken
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.repositories.refresh_token_repo import RefreshTokenRepository
 from app.repositories.user_repo import UserRepository
 from app.schemas.auth import AuthResponse, TokenPair, UserPublic
@@ -51,8 +51,12 @@ class AuthService:
     ) -> AuthResponse:
         """Create the user, persist them, return tokens for immediate login."""
         normalized = email.lower()
-        if await self.users.email_exists(normalized):
-            raise ConflictError("An account with this email already exists.")
+        # Uniqueness is now per-role — same email can hold one buyer + one
+        # seller account. We still reject a duplicate within the *same* role.
+        if await self.users.email_role_exists(normalized, UserRole(role)):
+            raise ConflictError(
+                "An account with this email already exists for this role.",
+            )
 
         user = User(
             email=normalized,
@@ -73,12 +77,14 @@ class AuthService:
         *,
         email: str,
         password: str,
+        role: str,
         user_agent: str | None,
         ip: str | None,
     ) -> AuthResponse:
-        """Verify credentials. We return the *same* error for unknown-email and
-        bad-password to avoid leaking which emails are registered."""
-        user = await self.users.get_by_email(email.lower())
+        """Verify credentials for the (email, role) account. We return the
+        *same* error for unknown account and bad password to avoid leaking
+        which email/role pairs are registered."""
+        user = await self.users.get_by_email_role(email.lower(), UserRole(role))
         if not user or not security.verify_password(password, user.password_hash):
             raise UnauthorizedError("Invalid email or password.")
         if not user.is_active:

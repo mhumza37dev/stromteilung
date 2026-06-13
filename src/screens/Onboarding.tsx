@@ -4,13 +4,13 @@ import { useLang } from '../hooks/useLang';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useAuth } from '../hooks/useAuth';
 import { useUpsertMyProfile } from '../hooks/api/useProfile';
+import { useCreateListing } from '../hooks/api/useListings';
 import { Nav } from '../components/layout/Nav';
 import { Card } from '../components/ui/Card';
 import { Input } from '../components/ui/Input';
 import { Button } from '../components/ui/Button';
 import { MapPicker } from '../components/MapPicker';
 import { TransformerPopup } from '../components/modals/TransformerPopup';
-import { ADDRESS_PIN_POSITIONS } from '../data/suggestions';
 import { ApiError } from '../lib/api';
 import type { Role, UserProfile } from '../types';
 
@@ -38,39 +38,12 @@ export interface OnboardingProps {
  * Progress bar at the top mirrors the step count and label so users know how
  * much is left.
  */
-/**
- * Lat/lng for the demo cities. Used as a fallback so the profile carries a
- * geo POINT even before we wire a real geocoder. Resolved by substring match
- * against the typed address.
- */
-const CITY_COORDS: Array<{ match: string; lat: number; lng: number }> = [
-  { match: 'München',    lat: 48.1486, lng: 11.5639 },
-  { match: 'Berlin',     lat: 52.5079, lng: 13.3036 },
-  { match: 'Frankfurt',  lat: 50.1156, lng:  8.6711 },
-  { match: 'Köln',       lat: 50.9356, lng:  6.9555 },
-];
-
-/** Try to attach approximate coords to the address the user typed. */
-function resolveCoords(address: string): { lat: number | null; lng: number | null } {
-  // 1. Exact suggestion match — most precise for our seeded demo addresses.
-  const pin = ADDRESS_PIN_POSITIONS[address];
-  if (pin) {
-    // The seed positions are screen-space, not real lat/lng. Fall through to
-    // city substring detection for now — kept here as a hook for the real
-    // geocoder we'll wire in M-next.
-  }
-  // 2. City substring → city centre fallback.
-  for (const c of CITY_COORDS) {
-    if (address.includes(c.match)) return { lat: c.lat, lng: c.lng };
-  }
-  return { lat: null, lng: null };
-}
-
 export function Onboarding({ role, onComplete, onBack }: OnboardingProps) {
   const { t } = useLang();
   const isMobile = useIsMobile();
   const { user } = useAuth();
   const upsertProfile = useUpsertMyProfile();
+  const createListing = useCreateListing();
 
   const [step, setStep] = useState<1 | 2>(1);
   const [showPopup, setShowPopup] = useState(false);
@@ -94,7 +67,6 @@ export function Onboarding({ role, onComplete, onBack }: OnboardingProps) {
   /** Build the backend body and submit. Triggered by the final "Let's go" CTA. */
   const handleFinish = async () => {
     setSubmitError(null);
-    const { lat, lng } = resolveCoords(data.address ?? '');
 
     // Display name fallback — derived from the email until we add an explicit
     // field. The user can rename later via the Profile page.
@@ -106,11 +78,29 @@ export function Onboarding({ role, onComplete, onBack }: OnboardingProps) {
         display_name: displayName.charAt(0).toUpperCase() + displayName.slice(1),
         whatsapp_e164: data.whatsapp || null,
         address_text: data.address || null,
-        latitude: lat,
-        longitude: lng,
+        latitude: data.lat ?? null,
+        longitude: data.lng ?? null,
         transformer_code: data.transformer || null,
         monthly_demand_kwh: data.requirement ? parseInt(data.requirement, 10) : null,
       });
+
+      // Sellers entered a day rate + capacity in step 2 — turn that into their
+      // first listing. Without this the seller finishes onboarding with an
+      // empty dashboard (the bug: the rate/capacity they typed was discarded).
+      // Must run *after* the profile upsert so the listing can inherit the
+      // profile's geo / transformer when the seller didn't pin a separate one.
+      if (role === 'seller') {
+        await createListing.mutateAsync({
+          day_rate: data.rate as string,
+          night_rate: data.nightRate ? data.nightRate : null,
+          capacity_kwh: parseInt(data.capacity ?? '', 10),
+          address_text: data.address || null,
+          latitude: data.lat ?? null,
+          longitude: data.lng ?? null,
+          transformer_code: data.transformer || null,
+        });
+      }
+
       onComplete();
     } catch (err) {
       setSubmitError(
@@ -122,6 +112,11 @@ export function Onboarding({ role, onComplete, onBack }: OnboardingProps) {
       );
     }
   };
+
+  // The final CTA stays busy until both the profile upsert *and* (for sellers)
+  // the listing create have settled, so the user can't double-submit or
+  // navigate away mid-flight.
+  const submitting = upsertProfile.isPending || createListing.isPending;
 
   const stepLabels = [
     t('stepIdentity'),
@@ -205,8 +200,19 @@ export function Onboarding({ role, onComplete, onBack }: OnboardingProps) {
                     required
                   />
                   <MapPicker
-                    value={data.address ?? ''}
-                    onChange={(v) => update('address', v)}
+                    value={{
+                      address: data.address ?? '',
+                      lat: data.lat ?? null,
+                      lng: data.lng ?? null,
+                    }}
+                    onChange={(v) =>
+                      setData((prev) => ({
+                        ...prev,
+                        address: v.address,
+                        lat: v.lat,
+                        lng: v.lng,
+                      }))
+                    }
                   />
                   <div>
                     <Input
@@ -323,16 +329,16 @@ export function Onboarding({ role, onComplete, onBack }: OnboardingProps) {
             <div className="flex justify-between mt-7">
               <Button
                 variant="ghost"
-                disabled={step === 1 || upsertProfile.isPending}
+                disabled={step === 1 || submitting}
                 onClick={() => step > 1 && setStep((s) => (s - 1) as 1 | 2)}
               >
                 ← {t('back')}
               </Button>
               <Button
-                disabled={!canAdvance() || upsertProfile.isPending}
+                disabled={!canAdvance() || submitting}
                 onClick={() => (step < 2 ? setStep(2) : handleFinish())}
                 icon={
-                  step === 2 && upsertProfile.isPending
+                  step === 2 && submitting
                     ? <Loader2 size={14} className="animate-spin" />
                     : undefined
                 }

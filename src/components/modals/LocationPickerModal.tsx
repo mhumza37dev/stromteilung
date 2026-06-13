@@ -3,37 +3,41 @@ import { MapPin } from 'lucide-react';
 import { useLang } from '../../hooks/useLang';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { Button } from '../ui/Button';
-import { MapPicker } from '../MapPicker';
+import { MapPicker, type MapPickerValue } from '../MapPicker';
 import { ModalShell } from './ModalShell';
 
 export interface LocationPickerModalProps {
-  initialAddress: string;
+  initial: MapPickerValue;
   onClose: () => void;
-  /** Fired with the user's confirmed address. */
-  onConfirm: (address: string) => void;
+  /** Fired with the user's confirmed address + coordinates. */
+  onConfirm: (value: MapPickerValue) => void;
 }
 
 /**
  * Full-screen-ish dialog around the `MapPicker`. Used when the buyer wants
  * to change their searched location without losing context.
  *
- * The confirm button only enables when the typed address differs from the
- * starting one — so users can dismiss the modal without making accidental
- * changes.
+ * Confirm enables once the user has placed a pin (i.e. we have lat/lng) and
+ * the address actually differs from the starting one — so the modal can be
+ * dismissed without accidental writes.
  */
 export function LocationPickerModal({
-  initialAddress,
+  initial,
   onClose,
   onConfirm,
 }: LocationPickerModalProps) {
   const { t } = useLang();
   const isMobile = useIsMobile();
-  const [draft, setDraft] = useState(initialAddress || '');
+  const [draft, setDraft] = useState<MapPickerValue>(initial);
 
-  const changed =
-    !!draft &&
-    draft.trim() !== (initialAddress || '').trim() &&
-    draft.length > 5;
+  const hasCoords = draft.lat != null && draft.lng != null;
+  const addressChanged =
+    !!draft.address &&
+    draft.address.trim() !== (initial.address || '').trim() &&
+    draft.address.length > 5;
+  const coordsChanged =
+    draft.lat !== initial.lat || draft.lng !== initial.lng;
+  const canConfirm = hasCoords && (addressChanged || coordsChanged);
 
   return (
     <ModalShell
@@ -53,7 +57,7 @@ export function LocationPickerModal({
         <Button variant="ghost" full onClick={onClose}>{t('cancel')}</Button>
         <Button
           full
-          disabled={!changed}
+          disabled={!canConfirm}
           onClick={() => { onConfirm(draft); onClose(); }}
         >
           {t('confirmBtn')}

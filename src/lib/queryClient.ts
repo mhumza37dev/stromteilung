@@ -1,4 +1,5 @@
 import { QueryClient } from '@tanstack/react-query';
+import { hydrateQueryClient, persistQueryClient } from './queryPersist';
 
 /**
  * App-wide TanStack Query configuration.
@@ -40,3 +41,9 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+// Restore the last persisted cache *before* any component mounts, so a
+// returning user's dashboard paints from storage on first render instead of
+// flashing a skeleton. Then keep persisting on every cache change.
+hydrateQueryClient(queryClient);
+persistQueryClient(queryClient);

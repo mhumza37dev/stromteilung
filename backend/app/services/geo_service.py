@@ -74,6 +74,7 @@ _NEARBY_SQL = text(
     WHERE u.role = 'seller'
       AND u.is_active = TRUE
       AND l.active    = TRUE
+      AND l.deleted_at IS NULL
       AND p.geo IS NOT NULL
       AND ST_DWithin(p.geo, CAST(:buyer_geo AS geography), :radius_m)
       AND (
@@ -101,7 +102,7 @@ class GeoService:
         buyer_lon: float,
         buyer_lat: float,
         buyer_transformer_id: uuid.UUID | None,
-        radius_m: int = 500,
+        radius_m: int = 1500,
         require_same_transformer: bool = False,
         limit: int = 50,
     ) -> list[NearbySeller]:

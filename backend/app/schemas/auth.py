@@ -27,10 +27,16 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """Body for `POST /auth/login`."""
+    """Body for `POST /auth/login`.
+
+    Role is required because email is no longer unique on its own — the same
+    person can hold a buyer *and* a seller account. The login form picks
+    which one to authenticate as via the existing role toggle.
+    """
 
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)
+    role: UserRole
 
 
 class RefreshRequest(BaseModel):

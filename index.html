@@ -1,12 +1,26 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" translate="no">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Browser auto-translation (Chrome, Safari, Edge) mutates text nodes by
+         wrapping them in <font> tags, which corrupts React's reconciliation and
+         crashes the app with "insertBefore" NotFoundError on the next render.
+         We already ship our own i18n (useLang), so opt out across the board. -->
+    <meta name="google" content="notranslate" />
+
+    <!-- Warm up TLS to the map tile + geocoding hosts so the first map render
+         doesn't pay handshake latency. dns-prefetch is the cheap fallback. -->
+    <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin />
+    <link rel="preconnect" href="https://nominatim.openstreetmap.org" crossorigin />
+    <link rel="dns-prefetch" href="https://tile.openstreetmap.org" />
+    <link rel="dns-prefetch" href="https://nominatim.openstreetmap.org" />
+
     <title>stromteilung</title>
   </head>
-  <body>
+  <body class="notranslate">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -40,7 +40,7 @@ async def nearby(
     user: CurrentUser,
     lat: float | None = Query(default=None, ge=-90, le=90),
     lng: float | None = Query(default=None, ge=-180, le=180),
-    radius_m: int = Query(default=500, ge=50, le=10_000),
+    radius_m: int = Query(default=1500, ge=50, le=10_000),
     require_same_transformer: bool = Query(default=False),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> NearbySellersResponse:

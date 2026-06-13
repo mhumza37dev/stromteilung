@@ -50,6 +50,8 @@ export interface RegisterBody {
 export interface LoginBody {
   email: string;
   password: string;
+  /** Required — the same email can hold both buyer + seller accounts. */
+  role: Role;
 }
 
 // --- Profile ---------------------------------------------------------------
@@ -59,7 +61,12 @@ export interface ProfilePublic {
   display_name: string;
   whatsapp_e164: string | null;
   address_text: string | null;
+  /** Hydrated from the saved PostGIS POINT — `null` until the user pins one. */
+  latitude: number | null;
+  longitude: number | null;
   transformer_id: string | null;
+  /** Joined from `transformers.code` server-side — null when none is set. */
+  transformer_code: string | null;
   monthly_demand_kwh: number | null;
   created_at: string;
   updated_at: string;
@@ -114,6 +121,14 @@ export interface ListingPublic {
   night_rate: string | null;
   capacity_kwh: number;
   active: boolean;
+  /** Per-listing overrides — null means "inherit from seller profile". */
+  address_text: string | null;
+  /** Hydrated from the listing's own PostGIS POINT (null until pinned). */
+  latitude: number | null;
+  longitude: number | null;
+  transformer_id: string | null;
+  /** Joined from `transformers.code` server-side for display. */
+  transformer_code: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -122,6 +137,10 @@ export interface ListingCreateBody {
   day_rate: string | number;
   night_rate?: string | number | null;
   capacity_kwh: number;
+  address_text?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  transformer_code?: string | null;
 }
 
 export interface ListingUpdateBody {
@@ -129,6 +148,10 @@ export interface ListingUpdateBody {
   night_rate?: string | number | null;
   capacity_kwh?: number;
   active?: boolean;
+  address_text?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  transformer_code?: string | null;
 }
 
 // --- Inquiries -------------------------------------------------------------

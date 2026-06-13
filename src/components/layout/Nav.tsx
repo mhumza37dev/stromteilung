@@ -54,11 +54,10 @@ export function Nav({
   const [notifOpen, setNotifOpen] = useState(false);
   const [authMenuOpen, setAuthMenuOpen] = useState(false);
 
-  // Role-specific avatar colour & initial.
+  // Role-specific avatar colour (icon is a generic user glyph).
   const avatarBg  = role === 'buyer' ? 'bg-blue-100' : 'bg-brand-100';
   const avatarFg  = role === 'buyer' ? 'text-blue-700' : 'text-brand-700';
   const ringClass = role === 'buyer' ? 'border-blue-700' : 'border-brand-700';
-  const initial   = role === 'buyer' ? 'K' : role === 'seller' ? 'V' : null;
 
   return (
     <nav
@@ -140,13 +139,13 @@ export function Nav({
               onClick={() => setMenuOpen((open) => !open)}
               className={[
                 'w-[34px] h-[34px] rounded-full flex items-center justify-center',
-                'text-[13px] font-bold cursor-pointer border-2',
+                'cursor-pointer border-2',
                 avatarBg,
                 avatarFg,
                 menuOpen ? ringClass : 'border-transparent',
               ].join(' ')}
             >
-              {initial}
+              <User size={17} />
             </button>
             {menuOpen && (
               <>

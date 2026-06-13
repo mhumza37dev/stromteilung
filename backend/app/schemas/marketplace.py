@@ -43,7 +43,13 @@ class ProfilePublic(BaseModel):
     display_name: str
     whatsapp_e164: str | None
     address_text: str | None
+    # Hydrated from the PostGIS POINT in `profiles.geo` — see users controller.
+    latitude: float | None = None
+    longitude: float | None = None
     transformer_id: uuid.UUID | None
+    # Joined from `transformers.code` — lets the client display + reuse the
+    # human-readable code (e.g. "TR-2847") without a second round-trip.
+    transformer_code: str | None = None
     monthly_demand_kwh: int | None
     created_at: datetime
     updated_at: datetime

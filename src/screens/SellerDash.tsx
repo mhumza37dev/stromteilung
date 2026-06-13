@@ -1,9 +1,10 @@
 import { useState, type ReactNode } from 'react';
 import {
-  BarChart2, Bell, Check, Edit2, Pause, Play, Plus, RefreshCw, Trash2, X, Zap,
+  BarChart2, Bell, Check, Edit2, Map as MapIcon, MapPin, Pause, Play, Plus, RefreshCw, Trash2, X, Zap,
 } from 'lucide-react';
 import { useLang } from '../hooks/useLang';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useAuth } from '../hooks/useAuth';
 import { useMyProfile, useUpsertMyProfile } from '../hooks/api/useProfile';
 import {
   useCreateListing,
@@ -20,6 +21,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { ProfileBanner } from '../components/ProfileBanner';
 import { RatingModal } from '../components/modals/RatingModal';
 import { TransformerModal } from '../components/modals/TransformerModal';
+import { LocationPickerModal } from '../components/modals/LocationPickerModal';
 import type { ListingPublic } from '../lib/api-types';
 
 export interface SellerDashProps {
@@ -34,11 +36,15 @@ export interface SellerDashProps {
  * - **Listings** are fetched once via `useMyListings` and mutated optimistically
  *   (TanStack Query rolls back on error). Inline edits never trigger a full
  *   refetch — the cache is updated in place so the UI stays buttery.
+ * - **Listing location/transformer** can be overridden per listing. When the
+ *   form opens for a new listing we prefill from the seller's profile so the
+ *   common case (one address, one transformer) takes zero extra clicks.
  * - **Notification panel** is a placeholder in M3; M4 wires real events.
  */
 export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) {
   const { t } = useLang();
   const isMobile = useIsMobile();
+  const { user } = useAuth();
 
   // --- Data ------------------------------------------------------------
   const profileQuery = useMyProfile();
@@ -59,6 +65,11 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
   const [formNightRate, setFormNightRate] = useState('');
   const [formShowNight, setFormShowNight] = useState(false);
   const [formCap, setFormCap]             = useState('');
+  const [formAddress, setFormAddress]         = useState('');
+  const [formLat, setFormLat]                 = useState<number | null>(null);
+  const [formLng, setFormLng]                 = useState<number | null>(null);
+  const [formTransformer, setFormTransformer] = useState('');
+  const [formShowMap, setFormShowMap]         = useState(false);
 
   // --- Local UI state --------------------------------------------------
   const [showRate, setShowRate]               = useState(false);
@@ -77,6 +88,25 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
     setFormNightRate('');
     setFormShowNight(false);
     setFormCap('');
+    setFormAddress('');
+    setFormLat(null);
+    setFormLng(null);
+    setFormTransformer('');
+    setFormShowMap(false);
+  };
+
+  /** Open the form blank, prefilled from the seller's profile. */
+  const openAddForm = () => {
+    setEditingId(null);
+    setFormRate('');
+    setFormNightRate('');
+    setFormShowNight(false);
+    setFormCap('');
+    setFormAddress(profile?.address_text ?? '');
+    setFormLat(profile?.latitude ?? null);
+    setFormLng(profile?.longitude ?? null);
+    setFormTransformer(profile?.transformer_code ?? '');
+    setShowForm(true);
   };
 
   const saveListing = () => {
@@ -85,6 +115,10 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
       day_rate: formRate,
       night_rate: nightRate,
       capacity_kwh: parseInt(formCap, 10),
+      address_text: formAddress || null,
+      latitude: formLat,
+      longitude: formLng,
+      transformer_code: formTransformer || null,
     };
     if (editingId !== null) {
       updateListing.mutate(
@@ -102,8 +136,24 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
     setFormCap(String(listing.capacity_kwh));
     setFormShowNight(listing.night_rate != null);
     setFormNightRate(listing.night_rate ?? '');
+    setFormAddress(listing.address_text ?? profile?.address_text ?? '');
+    // Prefer the listing's own coords; fall back to profile so the map
+    // opens somewhere sensible even for old rows pinned before this change.
+    setFormLat(listing.latitude ?? profile?.latitude ?? null);
+    setFormLng(listing.longitude ?? profile?.longitude ?? null);
+    setFormTransformer(listing.transformer_code ?? profile?.transformer_code ?? '');
     setShowForm(true);
   };
+
+  /** Did the user accept the profile's prefilled values without editing? */
+  const addressPrefilled =
+    !editingId &&
+    !!profile?.address_text &&
+    formAddress === profile.address_text;
+  const transformerPrefilled =
+    !editingId &&
+    !!profile?.transformer_code &&
+    formTransformer === profile.transformer_code;
 
   // --- Stats -----------------------------------------------------------
 
@@ -190,13 +240,37 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
           onClose={() => setShowTransformerModal(false)}
           onSave={(code) =>
             upsertProfile.mutate({
-              display_name: profile?.display_name ?? '',
+              // Full-replace PUT — carry over the saved geo so adding a
+              // transformer doesn't wipe the seller's pinned location.
+              // `display_name` has a server min_length of 2; fall back to the
+              // email local-part for a profile that doesn't exist yet.
+              display_name:
+                profile?.display_name ||
+                user?.email?.split('@')[0] ||
+                'User',
               whatsapp_e164: profile?.whatsapp_e164 ?? null,
               address_text: profile?.address_text ?? null,
+              latitude: profile?.latitude ?? null,
+              longitude: profile?.longitude ?? null,
               transformer_code: code,
               monthly_demand_kwh: profile?.monthly_demand_kwh ?? null,
             })
           }
+        />
+      )}
+      {formShowMap && (
+        <LocationPickerModal
+          initial={{
+            address: formAddress,
+            lat: formLat,
+            lng: formLng,
+          }}
+          onClose={() => setFormShowMap(false)}
+          onConfirm={(v) => {
+            setFormAddress(v.address);
+            setFormLat(v.lat);
+            setFormLng(v.lng);
+          }}
         />
       )}
 
@@ -258,14 +332,7 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
         <div>
           <div className="flex justify-between items-center mb-3.5">
             <div className="font-semibold text-[17px]">{t('myListings')}</div>
-            <Button
-              small
-              icon={<Plus size={13} />}
-              onClick={() => {
-                resetForm();
-                setShowForm(true);
-              }}
-            >
+            <Button small icon={<Plus size={13} />} onClick={openAddForm}>
               {t('addBtn')}
             </Button>
           </div>
@@ -322,9 +389,57 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
                   onChange={setFormCap}
                   placeholder={t('capacityPlaceholder')}
                 />
+
+                {/* Listing location — read-only chip + "choose on map" button */}
+                <div>
+                  <label className="text-[13px] font-medium text-gray-700 block mb-1.5">
+                    {t('listingLocationLabel')}
+                  </label>
+                  <div className="flex gap-2 items-center flex-wrap">
+                    <div
+                      className={[
+                        'flex-1 min-w-[220px] py-2 px-3 bg-surface border border-gray-200 rounded-md text-[13px] flex items-center gap-1.5 truncate',
+                        formAddress ? 'text-gray-900' : 'text-gray-400',
+                      ].join(' ')}
+                    >
+                      <MapPin size={13} className="text-brand-700 flex-shrink-0" />
+                      <span className="truncate">
+                        {formAddress || t('addressPlaceholder')}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setFormShowMap(true)}
+                      className="bg-transparent border border-brand-700 rounded-md px-3 py-2 cursor-pointer text-brand-700 text-[13px] font-medium inline-flex items-center gap-1.5 hover:bg-brand-50 transition-colors whitespace-nowrap"
+                    >
+                      <MapIcon size={13} />
+                      {t('chooseOnMap')}
+                    </button>
+                  </div>
+                  {addressPrefilled && (
+                    <div className="text-[11px] text-gray-400 mt-1">
+                      {t('prefilledFromProfile')}
+                    </div>
+                  )}
+                </div>
+
+                {/* Listing transformer */}
+                <div>
+                  <Input
+                    label={t('listingTransformerLabel')}
+                    value={formTransformer}
+                    onChange={setFormTransformer}
+                    placeholder={t('transformerPlaceholder')}
+                  />
+                  {transformerPrefilled && (
+                    <div className="text-[11px] text-gray-400 mt-1">
+                      {t('prefilledFromProfile')}
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex gap-2 mt-4">
-                <Button variant="ghost" small onClick={() => setShowForm(false)}>
+                <Button variant="ghost" small onClick={resetForm}>
                   {t('cancel')}
                 </Button>
                 <Button
@@ -394,13 +509,13 @@ function ListingRow({ listing: l, onEdit, onToggle, onDelete, t }: ListingRowPro
     >
       <div
         className={[
-          'p-2 rounded-[9px]',
+          'p-2 rounded-[9px] flex-shrink-0',
           l.active ? 'bg-brand-50' : 'bg-gray-50',
         ].join(' ')}
       >
         <Zap size={16} className={l.active ? 'text-brand-700' : 'text-gray-400'} />
       </div>
-      <div className="flex-1">
+      <div className="flex-1 min-w-0">
         <div className="font-semibold text-sm flex items-center gap-2 flex-wrap">
           <span>☀ {Number(l.day_rate).toFixed(2)} €/kWh</span>
           {l.night_rate != null && (
@@ -412,11 +527,30 @@ function ListingRow({ listing: l, onEdit, onToggle, onDelete, t }: ListingRowPro
         <div className="text-xs text-gray-400">
           {l.capacity_kwh} {tt('perMonth')}
         </div>
+        {(l.address_text || l.transformer_code) && (
+          <div className="text-xs text-gray-500 mt-1 flex items-center gap-1.5 flex-wrap">
+            {l.address_text && (
+              <span className="inline-flex items-center gap-1 max-w-full truncate">
+                <MapPin size={11} className="text-brand-700 flex-shrink-0" />
+                <span className="truncate">{l.address_text}</span>
+              </span>
+            )}
+            {l.address_text && l.transformer_code && (
+              <span className="text-gray-300">·</span>
+            )}
+            {l.transformer_code && (
+              <span className="inline-flex items-center gap-1 text-gray-700 font-medium">
+                <Zap size={11} className="text-brand-700 flex-shrink-0" />
+                {l.transformer_code}
+              </span>
+            )}
+          </div>
+        )}
       </div>
       <Badge color={l.active ? 'green' : 'gray'}>
         {l.active ? tt('active') : tt('paused')}
       </Badge>
-      <div className="flex gap-1">
+      <div className="flex gap-1 flex-shrink-0">
         <button
           type="button"
           onClick={onEdit}

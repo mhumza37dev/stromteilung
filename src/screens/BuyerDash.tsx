@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
-  Check, ChevronRight, Copy, MapPin, MessageCircle, Share2, Star,
+  Check, ChevronDown, Copy, MapPin, MessageCircle, Share2, Star,
 } from 'lucide-react';
 import { useLang } from '../hooks/useLang';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -15,6 +15,7 @@ import { Stars } from '../components/ui/Stars';
 import { ProfileBanner } from '../components/ProfileBanner';
 import { RatingModal } from '../components/modals/RatingModal';
 import { TransformerModal } from '../components/modals/TransformerModal';
+import { LocationPickerModal } from '../components/modals/LocationPickerModal';
 import { Skeleton } from '../components/ui/Skeleton';
 import type { NearbySeller } from '../lib/api-types';
 
@@ -44,11 +45,12 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
   // --- Data fetches ----------------------------------------------------
   const profileQuery = useMyProfile();
   const nearbyQuery = useNearbySellers({
-    // No explicit lat/lng → the backend uses the buyer's profile geo.
-    // Wait until profile load resolves so we don't fire a guaranteed 422.
-    lat: profileQuery.data?.user_id ? null : null,
-    lng: profileQuery.data?.user_id ? null : null,
-    radiusM: 500,
+    // Omitting lat/lng makes the backend resolve the buyer's profile geo
+    // server-side. Wait until the profile loads so we don't fire a guaranteed
+    // 422 against an unset address.
+    lat: null,
+    lng: null,
+    radiusM: 1500,
     enabled:
       !profileQuery.isLoading &&
       !!profileQuery.data &&
@@ -67,10 +69,26 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
   const [referralCopied, setReferralCopied] = useState(false);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const [showTransformerModal, setShowTransformerModal] = useState(false);
+  const [showLocationModal, setShowLocationModal] = useState(false);
 
   // --- Derived ---------------------------------------------------------
   const profile = profileQuery.data ?? null;
   const sellers = nearbyQuery.data?.items ?? [];
+
+  // Single source of truth for "we don't yet know what to show". Without this
+  // the grid flashed: while the profile loaded the nearby query was disabled
+  // (so `isLoading` was false) → the empty state rendered for a frame → then
+  // the profile resolved, the nearby query enabled and started fetching → the
+  // skeleton appeared → then the list. Gating on both phases collapses that
+  // "empty → loader → list" sequence into a single skeleton.
+  //
+  // `nearbyQuery.isPending` stays true from the moment the query is created
+  // (even while disabled) until the first successful response, so once the
+  // profile has an address we keep showing the skeleton straight through the
+  // hand-off into the real fetch.
+  const resolvingSellers =
+    profileQuery.isLoading ||
+    (!!profile?.address_text && nearbyQuery.isPending);
 
   const filteredSellers = useMemo(() => {
     if (filter === 'all') return sellers;
@@ -143,13 +161,36 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
           }
         />
       )}
+      {showLocationModal && (
+        <LocationPickerModal
+          initial={{
+            address: profile?.address_text ?? '',
+            lat: profile?.latitude ?? null,
+            lng: profile?.longitude ?? null,
+          }}
+          onClose={() => setShowLocationModal(false)}
+          onConfirm={(v) =>
+            upsertProfile.mutate({
+              // Server enforces display_name min_length=2 — fall back to a
+              // non-empty value so an empty profile state still saves cleanly.
+              display_name: profile?.display_name || 'User',
+              whatsapp_e164: profile?.whatsapp_e164 ?? null,
+              address_text: v.address || null,
+              latitude: v.lat,
+              longitude: v.lng,
+              monthly_demand_kwh: profile?.monthly_demand_kwh ?? null,
+            })
+          }
+        />
+      )}
 
       <Nav role="buyer" onLogout={onLogout} onProfile={onProfile} />
 
-      {/* Location bar — clickable, navigates to Profile to edit. */}
+      {/* Location bar — opens the map picker so the buyer can re-pin in place
+          without losing dashboard context. */}
       <button
         type="button"
-        onClick={onProfile}
+        onClick={() => setShowLocationModal(true)}
         className="w-full bg-white border-b border-gray-200/70 px-6 py-3 flex items-center gap-2 cursor-pointer hover:bg-gray-50 transition-colors text-left"
       >
         <MapPin size={16} className="text-brand-700" />
@@ -157,7 +198,7 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
           {locationLabel}
         </span>
         <span className="text-xs text-gray-400">· {t('radiusLabel')}</span>
-        <ChevronRight size={14} className="text-gray-400" />
+        <ChevronDown size={14} className="text-gray-400" />
       </button>
 
       <div className={['max-w-[1100px] mx-auto', isMobile ? 'p-4' : 'p-6'].join(' ')}>
@@ -169,10 +210,10 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
         )}
 
         {/* Filter chips — visible whenever we expect to render results */}
-        {(nearbyQuery.isLoading || filteredSellers.length > 0) && (
+        {(resolvingSellers || filteredSellers.length > 0) && (
           <div className="flex gap-2 mb-[22px] flex-wrap items-center">
             <span className="text-[13px] text-gray-500 font-medium">
-              {nearbyQuery.isLoading
+              {resolvingSellers
                 ? '…'
                 : `${filteredSellers.length} ${t('foundSellers')}`}
             </span>
@@ -203,7 +244,7 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
         )}
 
         {/* --- States: loading / empty / list ---------------------- */}
-        {nearbyQuery.isLoading ? (
+        {resolvingSellers ? (
           <SellerCardGridSkeleton isMobile={isMobile} />
         ) : filteredSellers.length === 0 ? (
           <EmptyState
@@ -250,6 +291,13 @@ interface SellerCardProps {
 }
 
 function SellerCard({ seller: s, rated, onWhatsAppClick, onRateClick, t }: SellerCardProps) {
+  const tt = t as (k: string) => string;
+  // Prefill the chat with a localized opener, personalised with the seller's
+  // name. wa.me carries it via the `text` query param.
+  const waMessage = tt('whatsappMessage').replace('{name}', s.display_name);
+  const waHref = s.whatsapp_e164
+    ? `https://wa.me/${s.whatsapp_e164.replace('+', '')}?text=${encodeURIComponent(waMessage)}`
+    : '#';
   return (
     <div className="bg-white border border-gray-200/70 rounded-[14px] overflow-hidden">
       {/* Header — gradient with name + price */}
@@ -323,7 +371,7 @@ function SellerCard({ seller: s, rated, onWhatsAppClick, onRateClick, t }: Selle
         </div>
         <div className="flex gap-2">
           <a
-            href={s.whatsapp_e164 ? `https://wa.me/${s.whatsapp_e164.replace('+', '')}` : '#'}
+            href={waHref}
             target="_blank"
             rel="noopener noreferrer"
             onClick={onWhatsAppClick}
@@ -371,7 +419,7 @@ function EmptyState({
         <div className="text-[13px] text-gray-400 mb-3.5">{tt('referralDesc')}</div>
         <div className="flex gap-2 bg-surface border border-gray-200 rounded-lg px-3 py-2 mb-3.5 items-center">
           <code className="text-[13px] flex-1 text-gray-700">
-            stromteilung.de/einladen/K-2847
+            stromteilung.com/einladen/K-2847
           </code>
           <button
             type="button"

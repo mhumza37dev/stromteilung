@@ -100,7 +100,7 @@ export function Auth({
       // Login: let the backend do the validation; convert 401 → field error.
       setSubmitting(true);
       try {
-        await login({ email: form.email, password: form.password });
+        await login({ email: form.email, password: form.password, role });
         onLoginSuccess();
       } catch (err) {
         setErrors({
@@ -151,9 +151,10 @@ export function Auth({
       >
         <div className="w-full max-w-[460px]">
           <Card>
-            {/* Role toggle (register only — login derives role from the account) */}
-            {!isLogin && (
-              <div
+            {/* Role toggle — shown for both login and register. Accounts are
+                keyed per (email, role), so even on login the user must say
+                whether they're signing in as a buyer or a seller. */}
+            <div
                 className={[
                   'flex items-center justify-between px-3.5 py-3 rounded-[10px] border transition-all mb-[22px]',
                   isBuyer
@@ -186,14 +187,11 @@ export function Auth({
                   />
                 </button>
               </div>
-            )}
 
             <div className="mb-[22px]">
-              {!isLogin && (
-                <Badge color={isBuyer ? 'blue' : 'green'}>
-                  {isBuyer ? t('buyer') : t('seller')}
-                </Badge>
-              )}
+              <Badge color={isBuyer ? 'blue' : 'green'}>
+                {isBuyer ? t('buyer') : t('seller')}
+              </Badge>
               <div className="font-bold text-xl mt-2.5">
                 {isLogin ? t('loginTitle') : t('createAccount')}
               </div>
@@ -246,11 +244,11 @@ export function Auth({
                   )}
                 </div>
               )}
-              {isLogin && (
+              {/* {isLogin && (
                 <div className="text-xs text-gray-400 bg-surface border border-gray-200 rounded-lg px-3 py-2">
                   {t('demoHint')}
                 </div>
-              )}
+              )} */}
               {errors.login && (
                 <div className="text-xs text-red-600">{errors.login}</div>
               )}

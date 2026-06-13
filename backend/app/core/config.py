@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     app_debug: bool = False
     app_name: str = "stromteilung-backend"
     app_secret_key: SecretStr = Field(..., min_length=16)
-    app_cors_origins: str = "http://localhost:5173"
+    app_cors_origins: str = "https://aluminum-allow-testimony-wrist.trycloudflare.com"
 
     # --- Database -----------------------------------------------------------
     database_url: str
