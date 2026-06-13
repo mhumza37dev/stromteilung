@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, refreshTokens, setAuthState } from '../lib/api';
+import { identifyUser, resetUser } from '../lib/analytics';
 import {
   clearTokens,
   loadTokens,
@@ -107,6 +108,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       saveUser(auth.user);
       setUser(auth.user);
       setStatus('authenticated');
+      // Bind the Mixpanel identity + super-properties for every later event.
+      identifyUser(auth.user);
       scheduleProactiveRefresh(stored.expiresAt);
     },
     [scheduleProactiveRefresh],
@@ -133,6 +136,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         saveUser(me);
         setUser(me);
         setStatus('authenticated');
+        // Re-bind Mixpanel identity for a returning, already-logged-in user.
+        identifyUser(me);
         scheduleProactiveRefresh(stored.expiresAt);
       } catch (err) {
         // Either token expired and refresh also failed, or backend's down.
@@ -194,6 +199,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     setAuthState(null);
     setUser(null);
     setStatus('anonymous');
+    // Clear the Mixpanel identity + session counters for the next user.
+    resetUser();
     // Drop any cached per-user query results.
     queryClient.clear();
   }, [queryClient]);

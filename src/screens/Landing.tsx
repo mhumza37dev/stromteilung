@@ -6,6 +6,7 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { LocationSearch } from '../components/LocationSearch';
 import { HERO_SELLERS } from '../data/sellers';
+import { track } from '../lib/analytics';
 import type { AuthMode, Role } from '../types';
 
 export interface LandingProps {
@@ -43,7 +44,12 @@ export function Landing({ onStart }: LandingProps) {
 
   return (
     <div className="min-h-screen bg-surface">
-      <Nav onAuth={(intent) => onStart(null, intent)} />
+      <Nav
+        onAuth={(intent) => {
+          track(intent === 'login' ? 'log_in_clicked' : 'register_clicked');
+          onStart(null, intent);
+        }}
+      />
 
       <div className={['max-w-[1100px] mx-auto', isMobile ? 'px-[18px] pt-9' : 'px-6 pt-16'].join(' ')}>
         {/* Hero */}
@@ -73,7 +79,12 @@ export function Landing({ onStart }: LandingProps) {
               {t('taglineDesc')}
             </p>
             <div className="flex gap-3 flex-wrap">
-              <Button onClick={() => onStart(null)}>
+              <Button
+                onClick={() => {
+                  track('get_started_clicked');
+                  onStart(null);
+                }}
+              >
                 {t('getStarted')} <ArrowRight size={16} />
               </Button>
             </div>
@@ -127,7 +138,10 @@ export function Landing({ onStart }: LandingProps) {
                   <Button
                     full
                     icon={<Search size={14} />}
-                    onClick={() => onStart(null)}
+                    onClick={() => {
+                      track('see_all_providers_clicked');
+                      onStart(null);
+                    }}
                   >
                     {t('seeAll')}
                   </Button>

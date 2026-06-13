@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   BarChart2, Bell, Check, Edit2, Map as MapIcon, MapPin, Pause, Play, Plus, RefreshCw, Trash2, X, Zap,
 } from 'lucide-react';
@@ -22,6 +22,7 @@ import { ProfileBanner } from '../components/ProfileBanner';
 import { RatingModal } from '../components/modals/RatingModal';
 import { TransformerModal } from '../components/modals/TransformerModal';
 import { LocationPickerModal } from '../components/modals/LocationPickerModal';
+import { setListingsCount, setUserTraits, track } from '../lib/analytics';
 import type { ListingPublic } from '../lib/api-types';
 
 export interface SellerDashProps {
@@ -50,7 +51,9 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
   const profileQuery = useMyProfile();
   const listingsQuery = useMyListings();
   const profile = profileQuery.data ?? null;
-  const listings = listingsQuery.data ?? [];
+  // Memoised so the reference is stable — keeps the analytics effects from
+  // re-running on every render.
+  const listings = useMemo(() => listingsQuery.data ?? [], [listingsQuery.data]);
 
   // --- Mutations -------------------------------------------------------
   const createListing = useCreateListing();
@@ -78,6 +81,41 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
   const [showTransformerModal, setShowTransformerModal] = useState(false);
 
   const showBanner = profile && !profile.transformer_id && !bannerDismissed;
+
+  // --- Analytics -------------------------------------------------------
+
+  // Keep the session listing count fresh so logout/delete can report it.
+  useEffect(() => {
+    if (!listingsQuery.isLoading) setListingsCount(listings.length);
+  }, [listingsQuery.isLoading, listings.length]);
+
+  // Enrich the Mixpanel People profile + correct the GeoIP city once the
+  // seller's profile has loaded.
+  useEffect(() => {
+    if (!profile) return;
+    setUserTraits({
+      name: profile.display_name,
+      whatsapp: profile.whatsapp_e164,
+      address: profile.address_text,
+      transformer: profile.transformer_code,
+      lat: profile.latitude,
+      lng: profile.longitude,
+    });
+  }, [profile]);
+
+  // Fire `dashboard_views` once per mount, after listings have loaded.
+  const dashboardTracked = useRef(false);
+  useEffect(() => {
+    if (dashboardTracked.current || listingsQuery.isLoading) return;
+    dashboardTracked.current = true;
+    track('dashboard_views', {
+      account_type: 'seller',
+      user_id: user?.id ?? '',
+      listings_count: listings.length,
+      daytime_listings: listings.length,
+      nighttime_listings: listings.filter((l) => l.night_rate != null).length,
+    });
+  }, [listingsQuery.isLoading, listings, user]);
 
   // --- Handlers --------------------------------------------------------
 
@@ -120,13 +158,35 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
       longitude: formLng,
       transformer_code: formTransformer || null,
     };
+    const dayPrice = Number(body.day_rate);
+    const nightPrice = body.night_rate != null ? Number(body.night_rate) : null;
     if (editingId !== null) {
       updateListing.mutate(
         { id: editingId, body },
-        { onSuccess: resetForm },
+        {
+          onSuccess: () => {
+            track('edit_listing', {
+              user_id: user?.id ?? '',
+              updated_daytime_price: dayPrice,
+              updated_nighttime_price: nightPrice,
+              updated_monthly_capacity: body.capacity_kwh,
+            });
+            resetForm();
+          },
+        },
       );
     } else {
-      createListing.mutate(body, { onSuccess: resetForm });
+      createListing.mutate(body, {
+        onSuccess: () => {
+          track('seller_add_listing', {
+            user_id: user?.id ?? '',
+            daytime_price: dayPrice,
+            nighttime_price: nightPrice,
+            monthly_capacity: body.capacity_kwh,
+          });
+          resetForm();
+        },
+      });
     }
   };
 
@@ -206,7 +266,14 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
           {!buyerRated ? (
             <button
               type="button"
-              onClick={() => setShowRate(true)}
+              onClick={() => {
+                track('rate_clicked', {
+                  account_type: 'seller',
+                  buyer_user_id: null,
+                  seller_user_id: user?.id ?? null,
+                });
+                setShowRate(true);
+              }}
               className="mt-2 bg-brand-50 border border-brand-200 hover:bg-brand-100 rounded-md px-3 py-1.5 text-xs text-brand-700 cursor-pointer font-medium transition-colors"
             >
               {t('rateBuyerBtn')}
@@ -228,8 +295,24 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
       {showRate && (
         <RatingModal
           target={`Max Müller (${t('buyer')})`}
-          onClose={() => setShowRate(false)}
-          onSubmit={() => {
+          onClose={() => {
+            track('rate_seller_clicked', {
+              account_type: 'seller',
+              buyer_user_id: null,
+              seller_user_id: user?.id ?? null,
+              rating: null,
+              skip: true,
+            });
+            setShowRate(false);
+          }}
+          onSubmit={(stars) => {
+            track('rate_seller_clicked', {
+              account_type: 'seller',
+              buyer_user_id: null,
+              seller_user_id: user?.id ?? null,
+              rating: stars,
+              skip: false,
+            });
             setBuyerRated(true);
             setShowRate(false);
           }}
@@ -281,6 +364,13 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
         onRatings={onRatings}
         notifications={notificationsPanel}
         notifCount={buyerRated ? 0 : 1}
+        onNotifOpen={() =>
+          track('notification_icon_clicked', {
+            user_id: user?.id ?? '',
+            new_notifications: buyerRated ? 0 : 1,
+            total_notifications: 1,
+          })
+        }
       />
 
       <div
@@ -291,7 +381,13 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
       >
         {showBanner && (
           <ProfileBanner
-            onAdd={() => setShowTransformerModal(true)}
+            onAdd={() => {
+              track('transformer_info_clicked', {
+                user_id: user?.id ?? null,
+                source: 'seller_dashboard',
+              });
+              setShowTransformerModal(true);
+            }}
             onDismiss={() => setBannerDismissed(true)}
           />
         )}
@@ -474,7 +570,18 @@ export function SellerDash({ onLogout, onProfile, onRatings }: SellerDashProps) 
                       body: { active: !l.active },
                     })
                   }
-                  onDelete={() => deleteListing.mutate(l.id)}
+                  onDelete={() =>
+                    deleteListing.mutate(l.id, {
+                      onSuccess: () =>
+                        track('remove_listing', {
+                          user_id: user?.id ?? '',
+                          daytime_price: Number(l.day_rate),
+                          nighttime_price:
+                            l.night_rate != null ? Number(l.night_rate) : null,
+                          monthly_capacity: l.capacity_kwh,
+                        }),
+                    })
+                  }
                   t={t}
                 />
               ))}

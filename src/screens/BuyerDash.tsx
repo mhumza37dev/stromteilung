@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check, ChevronDown, Copy, MapPin, MessageCircle, Share2, Star,
 } from 'lucide-react';
@@ -17,7 +17,20 @@ import { RatingModal } from '../components/modals/RatingModal';
 import { TransformerModal } from '../components/modals/TransformerModal';
 import { LocationPickerModal } from '../components/modals/LocationPickerModal';
 import { Skeleton } from '../components/ui/Skeleton';
+import {
+  bumpWhatsappClicks,
+  setUserTraits,
+  track,
+  type BuyerFilter,
+} from '../lib/analytics';
 import type { NearbySeller } from '../lib/api-types';
+
+/** Map the internal filter key to the analytics-spec value. */
+const FILTER_EVENT: Record<Filter, BuyerFilter> = {
+  all: 'all',
+  cheap: 'cheapest',
+  top: 'top_rated',
+};
 
 export interface BuyerDashProps {
   onLogout: () => void;
@@ -73,7 +86,10 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
 
   // --- Derived ---------------------------------------------------------
   const profile = profileQuery.data ?? null;
-  const sellers = nearbyQuery.data?.items ?? [];
+  // Memoised so the reference is stable across renders — keeps the
+  // `dashboard_views` effect and `filteredSellers` memo from re-running on
+  // every render.
+  const sellers = useMemo(() => nearbyQuery.data?.items ?? [], [nearbyQuery.data]);
 
   // Single source of truth for "we don't yet know what to show". Without this
   // the grid flashed: while the profile loaded the nearby query was disabled
@@ -90,6 +106,31 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
     profileQuery.isLoading ||
     (!!profile?.address_text && nearbyQuery.isPending);
 
+  // Fire `dashboard_views` exactly once per mount, after the nearby sellers
+  // have resolved so the listing counts are meaningful.
+  const dashboardTracked = useRef(false);
+  useEffect(() => {
+    if (dashboardTracked.current || resolvingSellers || !profile) return;
+    dashboardTracked.current = true;
+    // Enrich the Mixpanel People profile + correct the GeoIP city.
+    setUserTraits({
+      name: profile.display_name,
+      whatsapp: profile.whatsapp_e164,
+      address: profile.address_text,
+      transformer: profile.transformer_code,
+      monthlyDemandKwh: profile.monthly_demand_kwh,
+      lat: profile.latitude,
+      lng: profile.longitude,
+    });
+    track('dashboard_views', {
+      account_type: 'buyer',
+      user_id: profile.user_id,
+      listings_count: sellers.length,
+      daytime_listings: sellers.length,
+      nighttime_listings: sellers.filter((s) => s.night_rate != null).length,
+    });
+  }, [resolvingSellers, profile, sellers]);
+
   const filteredSellers = useMemo(() => {
     if (filter === 'all') return sellers;
     if (filter === 'cheap') return [...sellers].sort((a, b) => Number(a.day_rate) - Number(b.day_rate));
@@ -101,6 +142,22 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
   // --- Handlers --------------------------------------------------------
 
   const handleWhatsAppClick = (seller: NearbySeller) => {
+    // NORTH STAR — a buyer reaching out is the core value event. Fire it with
+    // the full seller context so funnels can segment on price/distance/rating.
+    track('whatsapp_clicked', {
+      buyer_user_id: profile?.user_id ?? null,
+      seller_user_id: seller.seller_id,
+      daytime_cost: Number(seller.day_rate),
+      nighttime_cost: seller.night_rate != null ? Number(seller.night_rate) : null,
+      capacity: seller.capacity_kwh,
+      distance: seller.distance_m,
+      transformer_no: seller.transformer_code,
+      rating: seller.avg_rating,
+      review_count: seller.review_count,
+    });
+    // Bump the session counter so logout/delete can report total reach-outs.
+    bumpWhatsappClicks();
+
     // Fire-and-forget — never block the redirect on this network call.
     recordInquiry.mutate(
       { seller_id: seller.seller_id, listing_id: seller.listing_id },
@@ -112,6 +169,13 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
 
   const handleRatingSubmit = (stars: number) => {
     if (!rateTarget) return;
+    track('rate_seller_clicked', {
+      account_type: 'buyer',
+      buyer_user_id: profile?.user_id ?? null,
+      seller_user_id: rateTarget.seller_id,
+      rating: stars,
+      skip: false,
+    });
     submitRating.mutate(
       { target_id: rateTarget.seller_id, stars },
       {
@@ -143,7 +207,16 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
       {rateTarget && (
         <RatingModal
           target={rateTarget.display_name}
-          onClose={() => setRateTarget(null)}
+          onClose={() => {
+            track('rate_seller_clicked', {
+              account_type: 'buyer',
+              buyer_user_id: profile?.user_id ?? null,
+              seller_user_id: rateTarget.seller_id,
+              rating: null,
+              skip: true,
+            });
+            setRateTarget(null);
+          }}
           onSubmit={handleRatingSubmit}
         />
       )}
@@ -228,7 +301,13 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
                 <button
                   key={value}
                   type="button"
-                  onClick={() => setFilter(value)}
+                  onClick={() => {
+                    setFilter(value);
+                    track('filter_clicked', {
+                      buyer_user_id: profile?.user_id ?? null,
+                      filter: FILTER_EVENT[value],
+                    });
+                  }}
                   className={[
                     'px-3.5 py-1.5 rounded-full border-[1.5px] text-[13px] cursor-pointer transition-colors',
                     filter === value
@@ -267,7 +346,14 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
                 seller={s}
                 rated={!!rated[s.seller_id]}
                 onWhatsAppClick={() => handleWhatsAppClick(s)}
-                onRateClick={() => setRateTarget(s)}
+                onRateClick={() => {
+                  track('rate_clicked', {
+                    account_type: 'buyer',
+                    buyer_user_id: profile?.user_id ?? null,
+                    seller_user_id: s.seller_id,
+                  });
+                  setRateTarget(s);
+                }}
                 t={t}
               />
             ))}
@@ -282,6 +368,24 @@ export function BuyerDash({ onLogout, onProfile }: BuyerDashProps) {
 // Sub-components — extracted to keep BuyerDash's render block readable.
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a WhatsApp deep link that resolves correctly per device:
+ * - Mobile → `https://wa.me/…`, which the OS hands off to the installed app.
+ * - Desktop/web → `https://web.whatsapp.com/send`, opening WhatsApp Web in the
+ *   browser instead of bouncing through wa.me's "open in app?" interstitial
+ *   (which on desktop just re-opens our own tab).
+ */
+function whatsappLink(e164: string, text: string): string {
+  const phone = e164.replace(/[^\d]/g, '');
+  const msg = encodeURIComponent(text);
+  const isMobile =
+    typeof navigator !== 'undefined' &&
+    /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+  return isMobile
+    ? `https://wa.me/${phone}?text=${msg}`
+    : `https://web.whatsapp.com/send?phone=${phone}&text=${msg}`;
+}
+
 interface SellerCardProps {
   seller: NearbySeller;
   rated: boolean;
@@ -293,10 +397,10 @@ interface SellerCardProps {
 function SellerCard({ seller: s, rated, onWhatsAppClick, onRateClick, t }: SellerCardProps) {
   const tt = t as (k: string) => string;
   // Prefill the chat with a localized opener, personalised with the seller's
-  // name. wa.me carries it via the `text` query param.
+  // name. WhatsApp carries it via the `text` query param.
   const waMessage = tt('whatsappMessage').replace('{name}', s.display_name);
   const waHref = s.whatsapp_e164
-    ? `https://wa.me/${s.whatsapp_e164.replace('+', '')}?text=${encodeURIComponent(waMessage)}`
+    ? whatsappLink(s.whatsapp_e164, waMessage)
     : '#';
   return (
     <div className="bg-white border border-gray-200/70 rounded-[14px] overflow-hidden">
@@ -374,8 +478,20 @@ function SellerCard({ seller: s, rated, onWhatsAppClick, onRateClick, t }: Selle
             href={waHref}
             target="_blank"
             rel="noopener noreferrer"
-            onClick={onWhatsAppClick}
-            className="flex-1 bg-[#25d366] hover:bg-[#1ebe5d] text-white border-none rounded-lg py-2.5 flex items-center justify-center gap-1.5 text-sm font-medium cursor-pointer no-underline transition-colors"
+            aria-disabled={!s.whatsapp_e164}
+            onClick={(e) => {
+              // No number → nothing to open; keep the dead link inert.
+              if (!s.whatsapp_e164) {
+                e.preventDefault();
+                return;
+              }
+              // Fire analytics, but DON'T preventDefault — the anchor's own
+              // navigation (href + target=_blank) is what actually opens
+              // WhatsApp Web / the app. Calling preventDefault here was
+              // swallowing the click so nothing opened.
+              onWhatsAppClick();
+            }}
+            className={`flex-1 bg-[#25d366] hover:bg-[#1ebe5d] text-white border-none rounded-lg py-2.5 flex items-center justify-center gap-1.5 text-sm font-medium cursor-pointer no-underline transition-colors ${!s.whatsapp_e164 ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''}`}
           >
             <MessageCircle size={15} />
             {(t as (k: string) => string)('whatsappBtn')}

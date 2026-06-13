@@ -2,6 +2,14 @@ import { useState } from 'react';
 import { ArrowRight, Crosshair, Loader2, MapPin, X } from 'lucide-react';
 import { useLang } from '../hooks/useLang';
 import { ADDRESS_SUGGESTIONS } from '../data/suggestions';
+import { track } from '../lib/analytics';
+
+/** Count mock address matches for a query — mirrors the suggestions filter. */
+function resultsFor(query: string): number {
+  return ADDRESS_SUGGESTIONS.filter((s) =>
+    s.toLowerCase().includes(query.toLowerCase().slice(0, 3)),
+  ).length;
+}
 
 /**
  * Hero address search — the focal CTA on the landing page. A floating-label
@@ -25,9 +33,23 @@ export function LocationSearch() {
     setLocating(true);
     setShowSuggestions(false);
     window.setTimeout(() => {
-      setValue('Schillerstraße 12, 10627 Berlin');
+      const located = 'Schillerstraße 12, 10627 Berlin';
+      setValue(located);
       setLocating(false);
+      track('enter_your_address_clicked', {
+        address: located,
+        method: 'locate_me',
+        results_count: resultsFor(located),
+      });
     }, 1400);
+  };
+
+  const handleSearch = () => {
+    track('enter_your_address_clicked', {
+      address: value,
+      method: 'typed',
+      results_count: resultsFor(value),
+    });
   };
 
   const suggestions = ADDRESS_SUGGESTIONS.filter((s) =>
@@ -100,6 +122,7 @@ export function LocationSearch() {
         <button
           type="button"
           aria-label={t('searchHere')}
+          onClick={handleSearch}
           className="w-14 h-14 bg-brand-700 hover:bg-brand-800 border-none rounded-[10px] cursor-pointer flex items-center justify-center flex-shrink-0 transition-colors"
         >
           <ArrowRight size={20} className="text-white" strokeWidth={2.2} />

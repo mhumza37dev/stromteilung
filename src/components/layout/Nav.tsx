@@ -23,6 +23,8 @@ export interface NavProps {
   notifications?: ReactNode;
   /** Unread-count shown as a red badge on the bell icon. */
   notifCount?: number;
+  /** Fired when the user *opens* the notifications panel (for analytics). */
+  onNotifOpen?: () => void;
 }
 
 /**
@@ -47,6 +49,7 @@ export function Nav({
   onRatings,
   notifications,
   notifCount = 0,
+  onNotifOpen,
 }: NavProps) {
   const { t } = useLang();
   const isMobile = useIsMobile();
@@ -99,7 +102,12 @@ export function Nav({
             <button
               type="button"
               aria-label="notifications"
-              onClick={() => setNotifOpen((open) => !open)}
+              onClick={() =>
+                setNotifOpen((open) => {
+                  if (!open) onNotifOpen?.();
+                  return !open;
+                })
+              }
               className={[
                 'w-9 h-9 rounded-full border-[1.5px] border-gray-200',
                 'flex items-center justify-center cursor-pointer relative',

@@ -10,6 +10,7 @@ import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { renderLinks } from '../utils/renderText';
 import { ApiError } from '../lib/api';
+import { accountTypeFor, track, type AuthEntry } from '../lib/analytics';
 import type { AuthMode, Role } from '../types';
 
 /**
@@ -68,6 +69,8 @@ export function Auth({
   const { login, register } = useAuth();
 
   const isLogin = mode === 'login';
+  // Which surface led here — used as the `entry` property on auth events.
+  const entry: AuthEntry = isLogin ? 'login' : 'register';
 
   const [role, setRole] = useState<UiRole>(
     initRole === 'buyer' ? 'buyer' : 'seller',
@@ -100,7 +103,11 @@ export function Auth({
       // Login: let the backend do the validation; convert 401 → field error.
       setSubmitting(true);
       try {
-        await login({ email: form.email, password: form.password, role });
+        const user = await login({ email: form.email, password: form.password, role });
+        track('login_clicked', {
+          account_type: accountTypeFor(user.role),
+          user_id: user.id,
+        });
         onLoginSuccess();
       } catch (err) {
         setErrors({
@@ -121,10 +128,15 @@ export function Auth({
 
     setSubmitting(true);
     try {
-      await register({
+      const user = await register({
         email: form.email,
         password: form.password,
         role,
+      });
+      track('create_account', {
+        account_type: accountTypeFor(user.role),
+        user_id: user.id,
+        entry,
       });
       onRegisterSuccess();
     } catch (err) {
@@ -175,7 +187,14 @@ export function Auth({
                   type="button"
                   role="switch"
                   aria-checked={isBuyer}
-                  onClick={() => setRole(isBuyer ? 'seller' : 'buyer')}
+                  onClick={() => {
+                    const next: UiRole = isBuyer ? 'seller' : 'buyer';
+                    setRole(next);
+                    track('im_a_buyer_toggle_clicked', {
+                      account_type: next,
+                      entry,
+                    });
+                  }}
                   className={[
                     'w-11 h-6 rounded-full border-none cursor-pointer p-0 relative transition-colors flex-shrink-0',
                     isBuyer ? 'bg-blue-700' : 'bg-gray-300',
@@ -234,7 +253,13 @@ export function Auth({
                       className="mt-0.5 accent-brand-700 flex-shrink-0"
                     />
                     <span className="text-[13px] text-gray-700 leading-relaxed">
-                      {renderLinks(t('termsText'))}
+                      {renderLinks(t('termsText'), (spanIndex) =>
+                        track('privacy_clicked', {
+                          account_type: role,
+                          document: spanIndex === 0 ? 'terms' : 'privacy',
+                          entry,
+                        }),
+                      )}
                     </span>
                   </label>
                   {errors.terms && (

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Check, Edit2, Mail, MapPin, Phone, Trash2, User, X, Zap } from 'lucide-react';
 import { useLang } from '../hooks/useLang';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -10,6 +10,7 @@ import { Badge } from '../components/ui/Badge';
 import { Skeleton } from '../components/ui/Skeleton';
 import { DeleteProfileModal } from '../components/modals/DeleteProfileModal';
 import { LocationPickerModal } from '../components/modals/LocationPickerModal';
+import { accountTypeFor, setUserTraits, track } from '../lib/analytics';
 import type { Role } from '../types';
 
 export interface ProfilePageProps {
@@ -65,6 +66,32 @@ export function ProfilePage({
 
   const profile = profileQuery.data ?? null;
 
+  // Fire `profile_data_clicked` once the profile screen has its data — gives a
+  // "profile viewed" signal with the buyer's monthly capacity (seller listing
+  // prices live on listings, not the profile, so they're null here).
+  const profileViewTracked = useRef(false);
+  useEffect(() => {
+    if (profileViewTracked.current || !profile) return;
+    profileViewTracked.current = true;
+    // Enrich the Mixpanel People profile + correct the GeoIP city.
+    setUserTraits({
+      name: profile.display_name,
+      whatsapp: profile.whatsapp_e164,
+      address: profile.address_text,
+      transformer: profile.transformer_code,
+      monthlyDemandKwh: profile.monthly_demand_kwh,
+      lat: profile.latitude,
+      lng: profile.longitude,
+    });
+    track('profile_data_clicked', {
+      account_type: accountTypeFor(role),
+      user_id: profile.user_id,
+      daytime_price: null,
+      nighttime_price: null,
+      monthly_capacity: profile.monthly_demand_kwh,
+    });
+  }, [profile, role]);
+
   const name = profile?.display_name ?? '—';
   const email = user?.email ?? '—';
   const whatsapp = profile?.whatsapp_e164 ?? '';
@@ -105,6 +132,17 @@ export function ProfilePage({
     if (key === 'transformer') body.transformer_code = draft || null;
     upsertProfile.mutate(body, {
       onSuccess: () => {
+        track('update_profile', {
+          account_type: accountTypeFor(role),
+          user_id: profile.user_id,
+          updated_whatsapp: body.whatsapp_e164,
+          updated_transformer_no: body.transformer_code,
+        });
+        // Keep the People profile in sync with the just-saved values.
+        setUserTraits({
+          whatsapp: body.whatsapp_e164,
+          transformer: body.transformer_code,
+        });
         setEditKey(null);
         setDraft('');
       },

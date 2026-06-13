@@ -14,6 +14,12 @@ import {
   SellerDashSkeleton,
 } from './screens/skeletons';
 import type { AuthMode, Screen } from './types';
+import {
+  accountTypeFor,
+  getListingsCount,
+  getWhatsappClicks,
+  track,
+} from './lib/analytics';
 
 /**
  * Lazy chunks — each screen becomes its own JS bundle. The Landing chunk is
@@ -64,7 +70,17 @@ function prefetch(...thunks: Array<() => Promise<unknown>>) {
  * Root of the app — wires every provider and delegates routing to
  * `<AppRouter />` (which can read `useAuth()`, unlike App itself).
  */
+// Module-level guard so React 18/19 StrictMode's double-mount in dev doesn't
+// fire the anonymous "site visited" event twice.
+let visitorTracked = false;
+
 export default function App() {
+  useEffect(() => {
+    if (visitorTracked) return;
+    visitorTracked = true;
+    track('website_visitors');
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <LanguageProvider initial="de">
@@ -146,19 +162,34 @@ function AppRouter() {
     }
   }, [screen]);
 
+  // Snapshot the session metrics the spec wants on logout/delete *before*
+  // teardown clears the user. Seller cares about listing count, buyer about
+  // how many WhatsApp contacts they made this session.
+  const sessionMetrics = useCallback(
+    () => ({
+      account_type: user ? accountTypeFor(user.role) : ('buyer' as const),
+      user_id: user?.id ?? '',
+      listings_count: getListingsCount(),
+      whatsapp_clicks: getWhatsappClicks(),
+    }),
+    [user],
+  );
+
   // Wrapper for logout that also clears local stack state.
   const handleLogout = useCallback(async () => {
+    track('logout_account', sessionMetrics());
     await logout();
     resetToLanding();
-  }, [logout, resetToLanding]);
+  }, [logout, resetToLanding, sessionMetrics]);
 
   // Account deletion: soft-delete server-side, then drop the session and
   // return to landing. Rethrows on failure so the modal keeps itself open and
   // shows the error instead of navigating away from a still-live account.
   const handleDeleteAccount = useCallback(async () => {
+    track('delete_account', sessionMetrics());
     await deleteAccount();
     resetToLanding();
-  }, [deleteAccount, resetToLanding]);
+  }, [deleteAccount, resetToLanding, sessionMetrics]);
 
   const onStartFromLanding = useCallback(
     (_mode: unknown, intent?: AuthMode) => {

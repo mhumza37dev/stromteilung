@@ -12,6 +12,7 @@ import { Button } from '../components/ui/Button';
 import { MapPicker } from '../components/MapPicker';
 import { TransformerPopup } from '../components/modals/TransformerPopup';
 import { ApiError } from '../lib/api';
+import { accountTypeFor, track } from '../lib/analytics';
 import type { Role, UserProfile } from '../types';
 
 export interface OnboardingProps {
@@ -101,6 +102,11 @@ export function Onboarding({ role, onComplete, onBack }: OnboardingProps) {
         });
       }
 
+      track('complete_profile_clicked', {
+        account_type: accountTypeFor(role),
+        user_id: user?.id ?? '',
+        transformer_no: data.transformer || null,
+      });
       onComplete();
     } catch (err) {
       setSubmitError(
@@ -223,7 +229,13 @@ export function Onboarding({ role, onComplete, onBack }: OnboardingProps) {
                     />
                     <button
                       type="button"
-                      onClick={() => setShowPopup(true)}
+                      onClick={() => {
+                        track('transformer_info_clicked', {
+                          user_id: user?.id ?? null,
+                          source: 'create_account',
+                        });
+                        setShowPopup(true);
+                      }}
                       className="mt-2 inline-flex items-center gap-1.5 bg-transparent text-brand-700 border-none py-1 text-[13px] font-medium cursor-pointer"
                     >
                       <Info size={14} />
@@ -336,7 +348,19 @@ export function Onboarding({ role, onComplete, onBack }: OnboardingProps) {
               </Button>
               <Button
                 disabled={!canAdvance() || submitting}
-                onClick={() => (step < 2 ? setStep(2) : handleFinish())}
+                onClick={() => {
+                  if (step < 2) {
+                    track('your_info_clicked', {
+                      account_type: accountTypeFor(role),
+                      has_whatsapp: !!data.whatsapp,
+                      has_location: !!data.address || data.lat != null,
+                      transformer_no: data.transformer || null,
+                    });
+                    setStep(2);
+                  } else {
+                    handleFinish();
+                  }
+                }}
                 icon={
                   step === 2 && submitting
                     ? <Loader2 size={14} className="animate-spin" />
